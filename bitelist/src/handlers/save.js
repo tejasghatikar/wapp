@@ -6,7 +6,7 @@ import {
   extractGoogleMapsUrl,
   resolveGoogleMapsPlaceName
 } from '../services/instagram.js';
-import { searchPlaces, extractAreaFromAddress } from '../services/places.js';
+import { searchPlaces, extractAreaFromAddress, resolvePhotoUrl } from '../services/places.js';
 import {
   createSave,
   createPending,
@@ -204,7 +204,7 @@ async function processBulkEntry(user, line) {
     return { line, status: 'not_found', name };
   }
 
-  const place = candidates[0];
+  const place = await enrichWithPhoto(candidates[0]);
   const saved = await createSave(user.id, {
     restaurant_name: place.name,
     google_place_id: place.place_id,
@@ -215,6 +215,7 @@ async function processBulkEntry(user, line) {
     source_type: sourceType,
     source_url: sourceUrl,
     google_maps_url: place.google_maps_url,
+    google_photo_url: place.google_photo_url || null,
     latitude: place.latitude,
     longitude: place.longitude
   });
@@ -322,7 +323,7 @@ async function runPlaceLookup(user, name, area, { sourceType, sourceUrl = null }
   }
 
   if (candidates.length === 1 || isStrongMatch(candidates[0], candidates[1])) {
-    const place = candidates[0];
+    const place = await enrichWithPhoto(candidates[0]);
     logger.info(
       { userId: user.id, placeName: place.name, placeId: place.place_id, sourceType },
       'Saving selected place'
@@ -337,6 +338,7 @@ async function runPlaceLookup(user, name, area, { sourceType, sourceUrl = null }
       source_type: sourceType,
       source_url: sourceUrl,
       google_maps_url: place.google_maps_url,
+      google_photo_url: place.google_photo_url || null,
       latitude: place.latitude,
       longitude: place.longitude
     });
@@ -358,6 +360,16 @@ async function runPlaceLookup(user, name, area, { sourceType, sourceUrl = null }
   await sendMessage(user.whatsapp_number, formatCandidates(candidates));
 }
 
+async function enrichWithPhoto(place) {
+  if (!place || !place.photo_name) return place;
+  try {
+    place.google_photo_url = await resolvePhotoUrl(place.photo_name);
+  } catch (err) {
+    logger.warn({ err, placeId: place.place_id }, 'Photo enrich failed (non-fatal)');
+  }
+  return place;
+}
+
 function isStrongMatch(top, second) {
   if (!second) return true;
   if (top.rating && second.rating && top.rating - second.rating >= 0.5) return true;
@@ -374,7 +386,7 @@ export async function handleDisambiguation(user, text, pending) {
     return;
   }
 
-  const place = pending.candidates[choice - 1];
+  const place = await enrichWithPhoto(pending.candidates[choice - 1]);
 
   const saved = await createSave(user.id, {
     restaurant_name: place.name,
@@ -386,6 +398,7 @@ export async function handleDisambiguation(user, text, pending) {
     source_type: pending.source_type,
     source_url: pending.source_url,
     google_maps_url: place.google_maps_url,
+    google_photo_url: place.google_photo_url || null,
     latitude: place.latitude,
     longitude: place.longitude
   });

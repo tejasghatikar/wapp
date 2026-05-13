@@ -89,7 +89,7 @@ export async function routeMessage(incoming) {
   if (/^(delete|remove)\s+/i.test(lower)) return handleDelete(user, body);
   if (/^share$/i.test(lower)) return handleShare(user);
   if (/^(note|notes)\s+/i.test(body)) return handleAddNote(user, body);
-  if (/^name\s+/i.test(lower)) return handleSetName(user, body);
+  if (/^(name|setname|my name is)\s+/i.test(lower)) return handleSetName(user, body);
 
   if (/^connect with /i.test(body)) return handleConnectRequest(user, body);
   if (/^accept\s+/i.test(lower)) return handleFriendResponse(user, body);

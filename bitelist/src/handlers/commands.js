@@ -152,7 +152,7 @@ export async function handleShare(user) {
 // ── Friend / display-name commands ───────────────────────────────────────
 
 export async function handleSetName(user, text) {
-  const name = text.replace(/^name\s+/i, '').trim();
+  const name = text.replace(/^(my name is|setname|name)\s+/i, '').trim();
   if (!name) {
     await sendMessage(
       user.whatsapp_number,

@@ -58,7 +58,8 @@ export async function searchPlaces(query, area = null) {
           'places.priceLevel',
           'places.types',
           'places.googleMapsUri',
-          'places.location'
+          'places.location',
+          'places.photos'
         ].join(',')
       },
       body: JSON.stringify({
@@ -104,8 +105,40 @@ function normalizePlace(p) {
     google_maps_url: p.googleMapsUri,
     latitude: p.location?.latitude,
     longitude: p.location?.longitude,
-    cuisine_tags: inferCuisineTags(p.types || [])
+    cuisine_tags: inferCuisineTags(p.types || []),
+    photo_name: p.photos?.[0]?.name || null
   };
+}
+
+/**
+ * Resolve a Places photo "name" (e.g. places/.../photos/...) to a public CDN URL.
+ * Google's media endpoint redirects to lh3.googleusercontent.com — we follow it
+ * and capture the final URL so the API key never leaves the server.
+ */
+export async function resolvePhotoUrl(photoName) {
+  if (!photoName) return null;
+  if (!config.google.placesApiKey) return null;
+  try {
+    const url = `https://places.googleapis.com/v1/${photoName}/media?maxHeightPx=600&maxWidthPx=800&skipHttpRedirect=true&key=${config.google.placesApiKey}`;
+    const res = await fetch(url, {
+      method: 'GET',
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!res.ok) {
+      logger.warn({ status: res.status }, 'Photo resolve: non-OK response');
+      return null;
+    }
+    const ct = res.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const data = await res.json().catch(() => null);
+      const photoUri = data?.photoUri;
+      return typeof photoUri === 'string' ? photoUri : null;
+    }
+    return res.url || null;
+  } catch (err) {
+    logger.warn({ err }, 'Photo resolve threw');
+    return null;
+  }
 }
 
 const TYPE_TO_CUISINE = {

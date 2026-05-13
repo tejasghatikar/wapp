@@ -111,7 +111,19 @@ export async function handleGoogleMapsSave(user, text) {
 }
 
 async function runPlaceLookup(user, name, area, { sourceType, sourceUrl = null }) {
+  logger.info({ userId: user.id, name, area, sourceType }, 'Starting place lookup');
   const candidates = await searchPlaces(name, area);
+  logger.info(
+    {
+      userId: user.id,
+      name,
+      area,
+      sourceType,
+      candidateCount: candidates.length,
+      candidates: candidates.map((c) => ({ name: c.name, place_id: c.place_id }))
+    },
+    'Place lookup complete'
+  );
 
   if (candidates.length === 0) {
     await sendMessage(
@@ -123,6 +135,10 @@ async function runPlaceLookup(user, name, area, { sourceType, sourceUrl = null }
 
   if (candidates.length === 1 || isStrongMatch(candidates[0], candidates[1])) {
     const place = candidates[0];
+    logger.info(
+      { userId: user.id, placeName: place.name, placeId: place.place_id, sourceType },
+      'Saving selected place'
+    );
     const saved = await createSave(user.id, {
       restaurant_name: place.name,
       google_place_id: place.place_id,
@@ -136,6 +152,7 @@ async function runPlaceLookup(user, name, area, { sourceType, sourceUrl = null }
       latitude: place.latitude,
       longitude: place.longitude
     });
+    logger.info({ userId: user.id, saveId: saved.id, duplicate: saved.duplicate }, 'Save insert complete');
 
     if (saved.duplicate) {
       await sendMessage(user.whatsapp_number, `You've already saved *${place.name}*. 👍`);
@@ -149,6 +166,7 @@ async function runPlaceLookup(user, name, area, { sourceType, sourceUrl = null }
   }
 
   await createPending(user.id, candidates, sourceUrl, sourceType);
+  logger.info({ userId: user.id, candidateCount: candidates.length }, 'Created pending save for disambiguation');
   await sendMessage(user.whatsapp_number, formatCandidates(candidates));
 }
 

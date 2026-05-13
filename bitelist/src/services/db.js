@@ -80,6 +80,17 @@ export async function createSave(userId, save) {
     .single();
   if (error) {
     if (error.code === '23505') return { duplicate: true };
+    logger.error(
+      {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        userId,
+        save
+      },
+      'Failed to insert save'
+    );
     throw error;
   }
   return data;

@@ -5,10 +5,12 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const bitelistRoot = path.join(__dirname, '..');
 
-// Parent app keys (Supabase, Google) often live in ../.env.local; bot-only keys in bitelist/.env
-dotenv.config({ path: path.join(bitelistRoot, '../.env.local') });
-dotenv.config({ path: path.join(bitelistRoot, '.env.local') });
-dotenv.config({ path: path.join(bitelistRoot, '.env') });
+// Render injects env in the dashboard — do not load .env files there (avoids wrong paths with rootDir).
+if (process.env.RENDER !== 'true') {
+  dotenv.config({ path: path.join(bitelistRoot, '../.env.local') });
+  dotenv.config({ path: path.join(bitelistRoot, '.env.local') });
+  dotenv.config({ path: path.join(bitelistRoot, '.env') });
+}
 
 const supabaseUrl =
   process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -32,7 +34,7 @@ const required = [
   ['TWILIO_AUTH_TOKEN', process.env.TWILIO_AUTH_TOKEN],
   ['TWILIO_WHATSAPP_FROM', twilioFromRaw],
   ['ANTHROPIC_API_KEY', process.env.ANTHROPIC_API_KEY],
-  ['GOOGLE_PLACES_API_KEY', placesKey],
+  ['GOOGLE_MAPS_API_KEY', placesKey],
   ['SUPABASE_URL', supabaseUrl],
   ['SUPABASE_SERVICE_ROLE_KEY', process.env.SUPABASE_SERVICE_ROLE_KEY]
 ];
@@ -54,6 +56,21 @@ if (missingKeys.length && runningOnRender) {
   console.warn(
     `[bitelist] Incomplete env on Render — add in Dashboard → Environment, then redeploy. Missing: ${missingKeys.join(', ')}`
   );
+  const probe = [
+    'TWILIO_ACCOUNT_SID',
+    'TWILIO_AUTH_TOKEN',
+    'TWILIO_WHATSAPP_FROM',
+    'ANTHROPIC_API_KEY',
+    'GOOGLE_MAPS_API_KEY',
+    'GOOGLE_PLACES_API_KEY',
+    'SUPABASE_URL',
+    'NEXT_PUBLIC_SUPABASE_URL',
+    'SUPABASE_SERVICE_ROLE_KEY'
+  ];
+  const presence = Object.fromEntries(
+    probe.map((k) => [k, Boolean(String(process.env[k] ?? '').trim())])
+  );
+  console.warn('[bitelist] env key presence (true = non-empty; no values logged):', JSON.stringify(presence));
 }
 
 export const configIncomplete = missingKeys.length > 0;

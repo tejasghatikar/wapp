@@ -1,0 +1,39 @@
+# Deploy from repo root: service runs in ./bitelist
+# After first deploy, set PUBLIC_URL to your Render URL (e.g. https://bitelist.onrender.com)
+# and point Twilio WhatsApp webhook to https://<that-host>/webhook
+services:
+  - type: web
+    name: bitelist
+    rootDir: bitelist
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_WHATSAPP_FROM
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CLAUDE_MODEL
+        value: claude-sonnet-4-20250514
+      - key: GOOGLE_PLACES_API_KEY
+        sync: false
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: ALLOW_NEW_USERS
+        value: "true"
+      - key: LOG_LEVEL
+        value: info

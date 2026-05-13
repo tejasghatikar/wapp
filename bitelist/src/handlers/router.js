@@ -28,8 +28,7 @@ import {
   handleShare,
   handleAddNote,
   handleSetName,
-  handleConnectRequest,
-  handleFriendResponse,
+  handleFriendLink,
   handleFriendsList,
   handleSuggest,
   handleDiscover
@@ -49,16 +48,16 @@ export async function routeMessage(incoming) {
     }
     const newUser = await handleOnboarding(from);
     const trimmedFirst = body.trim();
-    if (/^connect with /i.test(trimmedFirst)) {
+    if (/^friend\s/i.test(trimmedFirst)) {
       try {
-        await handleConnectRequest(newUser, trimmedFirst);
+        await handleFriendLink(newUser, trimmedFirst);
       } catch (err) {
-        logger.error({ err, from }, 'Connect request failed right after onboarding');
+        logger.error({ err, from }, 'Friend link failed right after onboarding');
       }
       try {
         await deleteOnboardingNamePendingForUser(newUser.id);
       } catch (err) {
-        logger.warn({ err, userId: newUser.id }, 'Failed to clear onboarding pending after connect');
+        logger.warn({ err, userId: newUser.id }, 'Failed to clear onboarding pending after friend link');
       }
     }
     return;
@@ -69,18 +68,9 @@ export async function routeMessage(incoming) {
   const lower = body.toLowerCase().trim();
   const trimmedBody = body.trim();
 
-  // Friend intents must win over onboarding name capture — otherwise "connect with…"
-  // is swallowed by onboarding (new user) or mistaken for a name (awaiting_name pending).
-  if (/^connect with /i.test(trimmedBody)) {
-    await handleConnectRequest(user, trimmedBody);
-    return;
-  }
-  if (/^accept\s+/i.test(lower)) {
-    await handleFriendResponse(user, body);
-    return;
-  }
-  if (/^decline\s+/i.test(lower)) {
-    await handleFriendResponse(user, body);
+  // Friend link must win over onboarding name capture (`friend <share_slug>` from list page).
+  if (/^friend\s/i.test(trimmedBody)) {
+    await handleFriendLink(user, trimmedBody);
     return;
   }
 
@@ -185,7 +175,11 @@ async function handleAwaitingName(user, body, pending) {
     'my',
     'the',
     'a',
-    'an'
+    'an',
+    'friend',
+    'accept',
+    'decline',
+    'connect'
   ]);
   if (GENERIC_DENY.has(firstWord.toLowerCase())) {
     await sendMessage(

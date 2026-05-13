@@ -49,14 +49,12 @@ shareRouter.get('/list/:slug', async (req, res) => {
   const ownerName = owner.display_name || 'Someone';
 
   const twilioDigits = (config.twilio.from || '').replace(/\D/g, '');
-  const connectUrl = twilioDigits
-    ? `https://wa.me/${twilioDigits}?text=${encodeURIComponent(
-        `connect with ${ownerName} ${owner.share_slug}`
-      )}`
+  const friendWaUrl = twilioDigits
+    ? `https://wa.me/${twilioDigits}?text=${encodeURIComponent(`friend ${owner.share_slug}`)}`
     : null;
 
   res.set('Content-Type', 'text/html');
-  res.send(renderListPage({ saves, ownerName, connectUrl }));
+  res.send(renderListPage({ saves, ownerName, friendWaUrl }));
 });
 
 shareRouter.get('/compare/:slugA/:slugB', async (req, res) => {
@@ -114,7 +112,7 @@ const CUISINE_TAG_COLOR = {
   club: '#92400e'
 };
 
-function renderListPage({ saves, ownerName, connectUrl }) {
+function renderListPage({ saves, ownerName, friendWaUrl }) {
   const tagColor = (t) => CUISINE_TAG_COLOR[String(t).toLowerCase()] || '#374151';
 
   const renderCard = (s) => {
@@ -182,14 +180,14 @@ function renderListPage({ saves, ownerName, connectUrl }) {
         (noArea.length ? `<section class="area-section">${noArea.map(renderCard).join('')}</section>` : '')
       : saves.map(renderCard).join('');
 
-  const connectBlock = connectUrl
+  const connectBlock = friendWaUrl
     ? `<div class="connect-wrap">
-        <a class="connect-btn" href="${escapeHtml(connectUrl)}">
+        <a class="connect-btn" href="${escapeHtml(friendWaUrl)}">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          Connect with ${escapeHtml(ownerName)}
+          Link on BiteList
         </a>
       </div>`
-    : `<div class="connect-wrap"><div class="connect-disabled">Connect unavailable (bot phone not configured)</div></div>`;
+    : `<div class="connect-wrap"><div class="connect-disabled">WhatsApp link unavailable (bot phone not configured)</div></div>`;
 
   return `<!doctype html>
 <html lang="en">

@@ -8,10 +8,7 @@ import {
   updateSaveNotes,
   updateUserDisplayName,
   getUserBySlug,
-  createFriendRequest,
-  getPendingRequestByName,
-  acceptFriendRequest,
-  declineFriendRequest,
+  ensureFriendship,
   getFriends,
   areFriends,
   getMutualSaves,
@@ -53,6 +50,7 @@ const HELP = `*BiteList* commands:
 *Friends*
 • *name <your name>* → set how friends see you
 • *friends* → see your connections
+• Open a shared list link → tap *Link on BiteList* in WhatsApp (one message) to connect
 • *suggest with Rahul* → places you both saved
 • *discover with Rahul* → places Rahul saved that you haven't
 
@@ -168,32 +166,32 @@ export async function handleSetName(user, text) {
   await logEvent(user.id, 'command', { name: 'set_name', value: name });
   await sendMessage(
     user.whatsapp_number,
-    `Got it — friends will see you as *${name}*. Share your list with *share* so they can connect.`
+    `Got it — friends will see you as *${name}*. Share your list with *share*; when they open the link they can tap *Link on BiteList* to connect.`
   );
   return true;
 }
 
-// Triggered by: "connect with <display_name> <share_slug>"
-export async function handleConnectRequest(requester, text) {
-  const match = text.match(/^connect with (.+?)\s+([a-f0-9]{10,})$/i);
+// Triggered by list page WhatsApp button: "friend <share_slug>" (list owner's slug)
+export async function handleFriendLink(requester, text) {
+  const match = text.trim().match(/^friend\s+([a-f0-9]{10,})$/i);
   if (!match) {
     await sendMessage(
       requester.whatsapp_number,
-      "Connection format not recognised. Use the Connect button on someone's BiteList page."
+      "That link looks wrong. Open someone's list in the browser and tap *Link on BiteList*."
     );
     return;
   }
 
-  const [, ownerName, slug] = match;
+  const [, slug] = match;
   const owner = await getUserBySlug(slug);
 
   if (!owner) {
-    await sendMessage(requester.whatsapp_number, "Couldn't find that BiteList. The link may have expired.");
+    await sendMessage(requester.whatsapp_number, "Couldn't find that list. Check the link.");
     return;
   }
 
   if (owner.id === requester.id) {
-    await sendMessage(requester.whatsapp_number, "That's your own list. 😄");
+    await sendMessage(requester.whatsapp_number, "That's your own list. Share it so friends can link with you.");
     return;
   }
 
@@ -201,81 +199,26 @@ export async function handleConnectRequest(requester, text) {
   if (already) {
     await sendMessage(
       requester.whatsapp_number,
-      `You and ${owner.display_name || 'that person'} are already connected.`
+      `You're already connected with *${owner.display_name || 'this list'}*. Try *suggest with ${firstNameToken(owner.display_name || 'them')}*.`
     );
     return;
   }
 
-  const req = await createFriendRequest(requester.id, owner.id);
-  if (req && req.duplicate) {
-    await sendMessage(
-      requester.whatsapp_number,
-      "You've already sent a request. Waiting for them to accept."
-    );
-    return;
-  }
-
-  logger.info(
-    { requesterId: requester.id, ownerId: owner.id, slug, ownerPhone: owner.whatsapp_number },
-    'Friend request created; notifying list owner'
-  );
+  await ensureFriendship(owner.id, requester.id);
+  await logEvent(requester.id, 'friend_linked', { owner_id: owner.id });
 
   const requesterLabel = requester.display_name || requester.whatsapp_number;
-  const firstName = firstNameToken(requesterLabel);
-  await sendMessage(
-    owner.whatsapp_number,
-    `👋 *${requesterLabel}* wants to connect on BiteList so they can see your saved places and find overlap with theirs.\n\nReply *accept ${firstName}* or *decline ${firstName}*.`
-  );
+  const ownerLabel = owner.display_name || 'this list';
 
   await sendMessage(
     requester.whatsapp_number,
-    `Request sent to ${owner.display_name || ownerName}. I'll let you know when they accept.`
+    `You're now connected with *${ownerLabel}* on BiteList.\n\nTry *suggest with ${firstNameToken(owner.display_name || ownerLabel)}* for overlap, or *discover with ${firstNameToken(owner.display_name || ownerLabel)}* for their picks you haven't saved.`
   );
 
-  await logEvent(requester.id, 'connect_request_sent', { to: owner.id });
-}
-
-// Triggered by: "accept priya" or "decline priya"
-export async function handleFriendResponse(user, text) {
-  const isAccept = /^accept\s+/i.test(text);
-  const name = text.replace(/^(accept|decline)\s+/i, '').trim();
-  if (!name) {
-    await sendMessage(
-      user.whatsapp_number,
-      'Reply with the friend\'s name, e.g. *accept priya* or *decline priya*.'
-    );
-    return;
-  }
-
-  const pending = await getPendingRequestByName(user.id, name);
-  if (!pending || !pending.requester) {
-    await sendMessage(
-      user.whatsapp_number,
-      `No pending request from "${name}". Check the name and try again.`
-    );
-    return;
-  }
-
-  const requester = pending.requester;
-
-  if (isAccept) {
-    await acceptFriendRequest(pending.id, requester.id, user.id);
-    const friendFirstName = firstNameToken(requester.display_name || name);
-    await sendMessage(
-      user.whatsapp_number,
-      `✅ Connected with *${requester.display_name || name}*!\n\nNow try: *suggest with ${friendFirstName}* to find places you both saved.`
-    );
-    const youFirstName = firstNameToken(user.display_name || 'them');
-    await sendMessage(
-      requester.whatsapp_number,
-      `✅ *${user.display_name || 'They'}* accepted your BiteList connection!\n\nTry: *suggest with ${youFirstName}*`
-    );
-    await logEvent(user.id, 'friend_accepted', { friend_id: requester.id });
-  } else {
-    await declineFriendRequest(pending.id);
-    await sendMessage(user.whatsapp_number, `Declined. They won't be notified.`);
-    await logEvent(user.id, 'friend_declined', { friend_id: requester.id });
-  }
+  await sendMessage(
+    owner.whatsapp_number,
+    `👋 *${requesterLabel}* linked with you on BiteList (they opened your list).`
+  );
 }
 
 export async function handleFriendsList(user) {
@@ -283,12 +226,9 @@ export async function handleFriendsList(user) {
   const friends = await getFriends(user.id);
   const base = publicBase();
   if (!friends.length) {
-    const hint = base
-      ? `\n\n${base}/list/${user.share_slug}`
-      : '';
     await sendMessage(
       user.whatsapp_number,
-      `No connections yet. Share your list and ask friends to tap Connect:${hint}`
+      `No connections yet. Share your list link (${base ? `${base}/list/${user.share_slug}` : 'use *share*'}) — when someone opens it and taps *Link on BiteList* in WhatsApp, you'll show up here.`
     );
     return;
   }

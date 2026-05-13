@@ -202,7 +202,7 @@ export async function deletePending(pendingId) {
   await getSupabase().from(T.pending).delete().eq('id', pendingId);
 }
 
-/** Clears onboarding name-capture pending rows so a structured command (e.g. connect) can proceed. */
+/** Clears onboarding name-capture pending rows so a structured command (e.g. `friend`) can proceed. */
 export async function deleteOnboardingNamePendingForUser(userId) {
   await getSupabase()
     .from(T.pending)
@@ -261,93 +261,18 @@ export async function updateUserDisplayName(userId, displayName) {
   if (error) throw error;
 }
 
-// ── Friends ──────────────────────────────────────────────────────────────
+// ── Friends (instant link via list page → WhatsApp `friend <slug>`) ───────
 
-export async function createFriendRequest(requesterId, recipientId) {
-  const { data, error } = await getSupabase()
-    .from(T.friendRequests)
-    .insert({ requester_id: requesterId, recipient_id: recipientId, status: 'pending' })
-    .select()
-    .single();
-  if (error) {
-    if (error.code === '23505') return { duplicate: true };
-    logger.error(
-      { code: error.code, message: error.message, requesterId, recipientId },
-      'Failed to create friend request'
-    );
-    throw error;
-  }
-  return data;
-}
-
-export async function getPendingRequest(requesterId, recipientId) {
-  const { data, error } = await getSupabase()
-    .from(T.friendRequests)
-    .select('*')
-    .eq('requester_id', requesterId)
-    .eq('recipient_id', recipientId)
-    .eq('status', 'pending')
-    .maybeSingle();
-  if (error) throw error;
-  return data;
-}
-
-// Find a pending request from someone whose display_name matches `requesterName`.
-// Uses a two-step lookup because PostgREST filters on joined columns are unreliable.
-export async function getPendingRequestByName(recipientId, requesterName) {
+export async function ensureFriendship(userAId, userBId) {
+  if (!userAId || !userBId || userAId === userBId) return;
   const supabase = getSupabase();
-  const trimmed = (requesterName || '').trim();
-  if (!trimmed) return null;
-
-  const { data: candidateUsers, error: userErr } = await supabase
-    .from(T.users)
-    .select('id, whatsapp_number, display_name, share_slug')
-    .ilike('display_name', `%${trimmed}%`);
-  if (userErr) throw userErr;
-  if (!candidateUsers || candidateUsers.length === 0) return null;
-
-  const ids = candidateUsers.map((u) => u.id);
-  const { data: requests, error: reqErr } = await supabase
-    .from(T.friendRequests)
-    .select('*')
-    .eq('recipient_id', recipientId)
-    .eq('status', 'pending')
-    .in('requester_id', ids)
-    .order('created_at', { ascending: false })
-    .limit(1);
-  if (reqErr) throw reqErr;
-  if (!requests || requests.length === 0) return null;
-
-  const request = requests[0];
-  const requester = candidateUsers.find((u) => u.id === request.requester_id) || null;
-  return { ...request, requester };
-}
-
-export async function acceptFriendRequest(requestId, requesterId, recipientId) {
-  const supabase = getSupabase();
-  const { error: updErr } = await supabase
-    .from(T.friendRequests)
-    .update({ status: 'accepted' })
-    .eq('id', requestId);
-  if (updErr) throw updErr;
-
-  const { error: insErr } = await supabase
-    .from(T.friendships)
-    .upsert(
-      [
-        { user_a_id: requesterId, user_b_id: recipientId },
-        { user_a_id: recipientId, user_b_id: requesterId }
-      ],
-      { onConflict: 'user_a_id,user_b_id', ignoreDuplicates: true }
-    );
-  if (insErr) throw insErr;
-}
-
-export async function declineFriendRequest(requestId) {
-  const { error } = await getSupabase()
-    .from(T.friendRequests)
-    .update({ status: 'declined' })
-    .eq('id', requestId);
+  const { error } = await supabase.from(T.friendships).upsert(
+    [
+      { user_a_id: userAId, user_b_id: userBId },
+      { user_a_id: userBId, user_b_id: userAId }
+    ],
+    { onConflict: 'user_a_id,user_b_id', ignoreDuplicates: true }
+  );
   if (error) throw error;
 }
 

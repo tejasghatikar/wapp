@@ -32,19 +32,33 @@ export function formatCandidates(candidates) {
   return lines.join('\n').trim();
 }
 
-export function formatSaveConfirmation(save) {
+export function formatSaveConfirmation(save, { askStatus = false } = {}) {
   const rating = save.google_rating ? `⭐${save.google_rating}` : '';
   const cuisine = save.cuisine_tags?.length ? save.cuisine_tags.slice(0, 2).join(', ') : '';
   const price = save.price_level ? '₹'.repeat(save.price_level) : '';
   const meta = [cuisine, price].filter(Boolean).join(' · ');
 
-  return [
+  const lines = [
     `✅ Saved: *${save.restaurant_name}*${save.area ? `, ${save.area}` : ''}`,
     rating && meta ? `${rating} · ${meta}` : rating || meta,
-    save.google_maps_url ? `📍 ${save.google_maps_url}` : '',
-    '',
-    `Add a note: *note your text here* (attached to your latest save). Or keep forwarding reels.`
-  ]
-    .filter(Boolean)
-    .join('\n');
+    save.google_maps_url ? `📍 ${save.google_maps_url}` : ''
+  ].filter(Boolean);
+
+  if (askStatus) {
+    lines.push(
+      '',
+      'Have you been here?',
+      "1 · Haven't been — *want to go*",
+      '2 · *Been here* before'
+    );
+  } else {
+    lines.push('', 'Add a note: *note your text here* (attached to your latest save).');
+  }
+
+  return lines.join('\n');
+}
+
+export function formatStatusUpdated(save, status) {
+  const label = status === 'been_there' ? 'Been there' : 'Want to go';
+  return `Got it. *${save.restaurant_name}* marked as *${label}*.`;
 }

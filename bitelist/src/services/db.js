@@ -21,6 +21,7 @@ const T = {
   users: 'bitelist_users',
   saves: 'bitelist_saves',
   pending: 'bitelist_pending_saves',
+  pendingStatus: 'bitelist_pending_status',
   events: 'bitelist_events'
 };
 
@@ -196,6 +197,48 @@ export async function getLatestPending(userId) {
 
 export async function deletePending(pendingId) {
   await getSupabase().from(T.pending).delete().eq('id', pendingId);
+}
+
+export async function updateSaveStatus(saveId, status, visitedNotes = null) {
+  const patch = { status };
+  if (visitedNotes !== null) patch.visited_notes = visitedNotes;
+  const { error } = await getSupabase().from(T.saves).update(patch).eq('id', saveId);
+  if (error) throw error;
+}
+
+export async function createPendingStatus(userId, saveId) {
+  await getSupabase()
+    .from(T.pendingStatus)
+    .delete()
+    .eq('user_id', userId);
+
+  const { data, error } = await getSupabase()
+    .from(T.pendingStatus)
+    .insert({ user_id: userId, save_id: saveId })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function getLatestPendingStatus(userId) {
+  const { data, error } = await getSupabase()
+    .from(T.pendingStatus)
+    .select('*, save:bitelist_saves!inner(*)')
+    .eq('user_id', userId)
+    .gt('expires_at', new Date().toISOString())
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    logger.warn({ err: error, userId }, 'Failed to load pending status');
+    return null;
+  }
+  return data;
+}
+
+export async function deletePendingStatus(pendingStatusId) {
+  await getSupabase().from(T.pendingStatus).delete().eq('id', pendingStatusId);
 }
 
 export async function logEvent(userId, eventType, payload = {}) {

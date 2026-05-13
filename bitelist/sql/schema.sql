@@ -26,9 +26,26 @@ create table if not exists bitelist_saves (
   google_maps_url text,
   latitude double precision,
   longitude double precision,
+  status text default 'want_to_go',
+  visited_notes text,
   deleted_at timestamptz,
   created_at timestamptz default now()
 );
+
+-- Idempotently add the new columns to existing deployments.
+alter table bitelist_saves add column if not exists status text default 'want_to_go';
+alter table bitelist_saves add column if not exists visited_notes text;
+
+do $$ begin
+  if not exists (
+    select 1 from information_schema.constraint_column_usage
+    where table_name = 'bitelist_saves' and constraint_name = 'bitelist_saves_status_check'
+  ) then
+    alter table bitelist_saves
+      add constraint bitelist_saves_status_check
+      check (status in ('want_to_go', 'been_there'));
+  end if;
+end $$;
 
 create index if not exists idx_bitelist_saves_user_area
   on bitelist_saves(user_id, area)
@@ -54,6 +71,17 @@ create table if not exists bitelist_pending_saves (
 
 create index if not exists idx_bitelist_pending_user_created
   on bitelist_pending_saves(user_id, created_at desc);
+
+create table if not exists bitelist_pending_status (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid references bitelist_users(id) on delete cascade,
+  save_id uuid references bitelist_saves(id) on delete cascade,
+  expires_at timestamptz default (now() + interval '15 minutes'),
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_bitelist_pending_status_user_created
+  on bitelist_pending_status(user_id, created_at desc);
 
 create table if not exists bitelist_events (
   id uuid primary key default uuid_generate_v4(),

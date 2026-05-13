@@ -1,11 +1,18 @@
-import { getUserByPhone, getLatestPending, logEvent } from '../services/db.js';
+import {
+  getUserByPhone,
+  getLatestPending,
+  getLatestPendingStatus,
+  logEvent
+} from '../services/db.js';
 import { handleOnboarding } from './onboarding.js';
 import {
   handleReelSave,
   handleManualSave,
   handleGoogleMapsSave,
   handleDisambiguation,
-  handleBulkSave
+  handleBulkSave,
+  handleStatusReply,
+  isStatusReply
 } from './save.js';
 import { handleQuery } from './query.js';
 import {
@@ -37,6 +44,12 @@ export async function routeMessage(incoming) {
   await logEvent(user.id, 'message_in', { body });
 
   const lower = body.toLowerCase().trim();
+
+  const pendingStatus = await getLatestPendingStatus(user.id);
+  if (pendingStatus && isStatusReply(body)) {
+    await handleStatusReply(user, body, pendingStatus);
+    return;
+  }
 
   const pending = await getLatestPending(user.id);
   if (pending && pending.candidates?.length > 0 && /^[1-9]$|^option\s+[1-9]/i.test(body)) {

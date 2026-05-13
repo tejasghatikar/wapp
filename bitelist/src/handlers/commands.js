@@ -21,6 +21,7 @@ const HELP = `*BiteList* commands:
    _Toit Indiranagar_
    _Maize & Malt MG Road_
    _https://maps.app.goo.gl/..._
+• After every save I'll ask: *1* want to go · *2* been there
 • Ask *where should I go in JP Nagar* → query your list
 • *list* → your last 10 saves
 • *count* → how many you've saved

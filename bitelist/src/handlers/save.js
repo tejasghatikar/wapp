@@ -12,10 +12,13 @@ import {
   createPending,
   logEvent,
   deletePending,
-  getLatestPending
+  getLatestPending,
+  createPendingStatus,
+  deletePendingStatus,
+  updateSaveStatus
 } from '../services/db.js';
 import { sendMessage } from '../twilio/client.js';
-import { formatSaveConfirmation, formatCandidates } from '../utils/format.js';
+import { formatSaveConfirmation, formatCandidates, formatStatusUpdated } from '../utils/format.js';
 import { logger } from '../utils/logger.js';
 
 export async function handleReelSave(user, text) {
@@ -346,7 +349,7 @@ async function runPlaceLookup(user, name, area, { sourceType, sourceUrl = null }
     }
 
     await logEvent(user.id, 'save_success', { place_id: place.place_id, source: sourceType });
-    await sendMessage(user.whatsapp_number, formatSaveConfirmation(saved));
+    await promptStatusAfterSave(user, saved);
     return;
   }
 
@@ -395,5 +398,58 @@ export async function handleDisambiguation(user, text, pending) {
   }
 
   await logEvent(user.id, 'save_success', { place_id: place.place_id, source: pending.source_type });
-  await sendMessage(user.whatsapp_number, formatSaveConfirmation(saved));
+  await promptStatusAfterSave(user, saved);
+}
+
+async function promptStatusAfterSave(user, saved) {
+  try {
+    await createPendingStatus(user.id, saved.id);
+  } catch (err) {
+    logger.warn({ err, userId: user.id, saveId: saved.id }, 'Failed to create pending_status; sending plain confirmation');
+    await sendMessage(user.whatsapp_number, formatSaveConfirmation(saved));
+    return;
+  }
+  await sendMessage(user.whatsapp_number, formatSaveConfirmation(saved, { askStatus: true }));
+}
+
+const STATUS_REPLY_REGEX = /^(1|2|been|haven|haven't|want|want to go|been there)\b/i;
+
+export function isStatusReply(body) {
+  return STATUS_REPLY_REGEX.test(body.trim());
+}
+
+export async function handleStatusReply(user, text, pendingStatus) {
+  const trimmed = text.trim();
+  let status;
+
+  if (/^1\b/.test(trimmed) || /^(haven|want)/i.test(trimmed)) {
+    status = 'want_to_go';
+  } else if (/^2\b/.test(trimmed) || /^been/i.test(trimmed)) {
+    status = 'been_there';
+  } else {
+    await sendMessage(
+      user.whatsapp_number,
+      'Reply *1* (want to go) or *2* (been here). Or send another save / link.'
+    );
+    return;
+  }
+
+  const save = pendingStatus.save;
+  if (!save) {
+    logger.warn({ pendingStatus }, 'pending_status with missing save; clearing');
+    await deletePendingStatus(pendingStatus.id);
+    return;
+  }
+
+  try {
+    await updateSaveStatus(save.id, status);
+    await logEvent(user.id, 'status_set', { save_id: save.id, status });
+  } catch (err) {
+    logger.error({ err, saveId: save.id, status }, 'Failed to update save status');
+    await sendMessage(user.whatsapp_number, "Couldn't save that just now. Try again in a sec.");
+    return;
+  }
+
+  await deletePendingStatus(pendingStatus.id);
+  await sendMessage(user.whatsapp_number, formatStatusUpdated(save, status));
 }

@@ -11,7 +11,8 @@ import {
   createSave,
   createPending,
   logEvent,
-  deletePending
+  deletePending,
+  getLatestPending
 } from '../services/db.js';
 import { sendMessage } from '../twilio/client.js';
 import { formatSaveConfirmation, formatCandidates } from '../utils/format.js';
@@ -68,34 +69,195 @@ export async function handleReelSave(user, text) {
   });
 }
 
-export async function handleManualSave(user, text) {
-  await logEvent(user.id, 'save_attempt', { source: 'manual' });
+const KNOWN_AREAS = [
+  'indiranagar',
+  'koramangala',
+  'jp',
+  'jayanagar',
+  'hsr',
+  'whitefield',
+  'malleshwaram',
+  'mg',
+  'brigade'
+];
 
+/** Strip leading bullets / numbering like "1. ", "- ", "* ", "• " */
+function cleanBulkLine(line) {
+  return line
+    .replace(/^[\s>]+/, '')
+    .replace(/^[-*•]+\s*/, '')
+    .replace(/^\d+[.)]\s*/, '')
+    .trim();
+}
+
+function splitBulkInput(text) {
+  return text
+    .split(/\r?\n+/)
+    .map(cleanBulkLine)
+    .filter(Boolean);
+}
+
+function parseNameAndArea(line) {
+  const parts = line.split(/\s+/);
+  if (parts.length < 2) return { name: line, area: null };
+  const lastWord = parts[parts.length - 1].toLowerCase();
+  const hasArea = KNOWN_AREAS.some((a) => lastWord.includes(a));
+  return hasArea
+    ? { name: parts.slice(0, -1).join(' '), area: parts[parts.length - 1] }
+    : { name: line, area: null };
+}
+
+export async function handleManualSave(user, text) {
   const cleaned = text.replace(/^(save|add)\s+/i, '').trim();
   if (!cleaned) {
     await sendMessage(user.whatsapp_number, 'Save what? Try: *Save Toit Indiranagar*');
     return;
   }
 
-  const parts = cleaned.split(/\s+/);
-  const knownAreas = [
-    'indiranagar',
-    'koramangala',
-    'jp',
-    'jayanagar',
-    'hsr',
-    'whitefield',
-    'malleshwaram',
-    'mg',
-    'brigade'
-  ];
-  const lastWord = parts[parts.length - 1].toLowerCase();
-  const hasArea = knownAreas.some((a) => lastWord.includes(a));
+  const lines = splitBulkInput(cleaned);
+  if (lines.length > 1) {
+    await handleBulkSave(user, lines);
+    return;
+  }
 
-  const name = hasArea ? parts.slice(0, -1).join(' ') : cleaned;
-  const area = hasArea ? parts[parts.length - 1] : null;
-
+  await logEvent(user.id, 'save_attempt', { source: 'manual' });
+  const { name, area } = parseNameAndArea(cleaned);
   await runPlaceLookup(user, name, area, { sourceType: 'manual' });
+}
+
+/**
+ * Bulk save: each line is either a Google Maps link or a plain "name [area]" entry.
+ * Always picks the top Places result for each line to keep the flow non-interactive,
+ * then sends one summary so the user can fix wrong picks via *delete <name>*.
+ */
+export async function handleBulkSave(user, lines) {
+  await logEvent(user.id, 'save_attempt', { source: 'bulk', count: lines.length });
+
+  const stale = await getLatestPending(user.id);
+  if (stale) {
+    try {
+      await deletePending(stale.id);
+    } catch (err) {
+      logger.warn({ err, pendingId: stale.id }, 'Failed to clear stale pending before bulk save');
+    }
+  }
+
+  await sendMessage(
+    user.whatsapp_number,
+    `Got ${lines.length} places — adding them now. I'll send a summary in a moment.`
+  );
+
+  const results = [];
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    try {
+      const result = await processBulkEntry(user, line);
+      results.push(result);
+    } catch (err) {
+      logger.error({ err, line }, 'Bulk entry crashed');
+      results.push({ line, status: 'error' });
+    }
+  }
+
+  await sendMessage(user.whatsapp_number, formatBulkSummary(results));
+}
+
+async function processBulkEntry(user, line) {
+  const mapsUrl = extractGoogleMapsUrl(line);
+
+  let name = line;
+  let area = null;
+  let sourceType = 'manual';
+  let sourceUrl = null;
+
+  if (mapsUrl) {
+    sourceType = 'google_maps';
+    sourceUrl = mapsUrl;
+    try {
+      const { placeName } = await resolveGoogleMapsPlaceName(mapsUrl);
+      if (!placeName) {
+        return { line, status: 'maps_unresolved' };
+      }
+      name = placeName;
+      area = null;
+    } catch (err) {
+      logger.error({ err, mapsUrl }, 'Bulk: Maps resolve failed');
+      return { line, status: 'maps_error' };
+    }
+  } else {
+    const parsed = parseNameAndArea(line);
+    name = parsed.name;
+    area = parsed.area;
+  }
+
+  const candidates = await searchPlaces(name, area);
+  logger.info(
+    { line, name, area, candidateCount: candidates.length },
+    'Bulk: place lookup complete'
+  );
+
+  if (candidates.length === 0) {
+    return { line, status: 'not_found', name };
+  }
+
+  const place = candidates[0];
+  const saved = await createSave(user.id, {
+    restaurant_name: place.name,
+    google_place_id: place.place_id,
+    area: extractAreaFromAddress(place.address),
+    google_rating: place.rating,
+    price_level: place.price_level,
+    cuisine_tags: place.cuisine_tags,
+    source_type: sourceType,
+    source_url: sourceUrl,
+    google_maps_url: place.google_maps_url,
+    latitude: place.latitude,
+    longitude: place.longitude
+  });
+
+  if (saved.duplicate) {
+    await logEvent(user.id, 'save_duplicate', { place_id: place.place_id, source: 'bulk' });
+    return { line, status: 'duplicate', place };
+  }
+
+  await logEvent(user.id, 'save_success', { place_id: place.place_id, source: 'bulk' });
+  return { line, status: 'saved', place };
+}
+
+function formatBulkSummary(results) {
+  const saved = results.filter((r) => r.status === 'saved');
+  const duplicates = results.filter((r) => r.status === 'duplicate');
+  const notFound = results.filter(
+    (r) => r.status === 'not_found' || r.status === 'maps_unresolved' || r.status === 'maps_error'
+  );
+  const errored = results.filter((r) => r.status === 'error');
+
+  const out = [`Bulk save: ${saved.length} added, ${duplicates.length} already on list, ${notFound.length + errored.length} skipped.`];
+
+  if (saved.length) {
+    out.push('', `Saved (${saved.length}):`);
+    saved.forEach((r, i) => out.push(`${i + 1}. ${r.place.name}`));
+  }
+
+  if (duplicates.length) {
+    out.push('', `Already saved (${duplicates.length}):`);
+    duplicates.forEach((r) => out.push(`• ${r.place.name}`));
+  }
+
+  if (notFound.length) {
+    out.push('', `Couldn't find on Maps (${notFound.length}):`);
+    notFound.forEach((r) => out.push(`• ${r.line}`));
+    out.push('Reply *Save <name> <area>* with more detail, or paste the Google Maps link.');
+  }
+
+  if (errored.length) {
+    out.push('', `Skipped due to errors (${errored.length}):`);
+    errored.forEach((r) => out.push(`• ${r.line}`));
+  }
+
+  out.push('', 'Wrong pick? *delete <name>* to remove it.');
+  return out.join('\n');
 }
 
 export async function handleGoogleMapsSave(user, text) {

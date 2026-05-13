@@ -14,7 +14,13 @@ import { config } from '../config.js';
 const HELP = `*BiteList* commands:
 
 • Forward any *Instagram reel* → saves the restaurant
+• Send a *Google Maps link* → saves that place
 • *Save Toit Indiranagar* → manual save
+• *Bulk save* — type *Save* (or *Add*) then list places one per line:
+   _Save_
+   _Toit Indiranagar_
+   _Maize & Malt MG Road_
+   _https://maps.app.goo.gl/..._
 • Ask *where should I go in JP Nagar* → query your list
 • *list* → your last 10 saves
 • *count* → how many you've saved

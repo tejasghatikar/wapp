@@ -4,7 +4,8 @@ import {
   handleReelSave,
   handleManualSave,
   handleGoogleMapsSave,
-  handleDisambiguation
+  handleDisambiguation,
+  handleBulkSave
 } from './save.js';
 import { handleQuery } from './query.js';
 import {
@@ -40,6 +41,16 @@ export async function routeMessage(incoming) {
   const pending = await getLatestPending(user.id);
   if (pending && pending.candidates?.length > 0 && /^[1-9]$|^option\s+[1-9]/i.test(body)) {
     await handleDisambiguation(user, body, pending);
+    return;
+  }
+
+  const nonEmptyLines = body
+    .split(/\r?\n+/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  if (nonEmptyLines.length > 1 && nonEmptyLines.every((line) => extractGoogleMapsUrl(line))) {
+    await handleBulkSave(user, nonEmptyLines);
     return;
   }
 

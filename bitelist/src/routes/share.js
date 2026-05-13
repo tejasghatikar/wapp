@@ -17,6 +17,14 @@ function escapeHtml(s) {
   );
 }
 
+/** Inline Google-Maps-style red pin. No external requests, scales cleanly. */
+const MAP_PIN_SVG = `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg"><path fill="#EA4335" d="M12 2c-4.4 0-8 3.6-8 8 0 5.6 8 12 8 12s8-6.4 8-12c0-4.4-3.6-8-8-8z"/><circle cx="12" cy="10" r="3" fill="#fff"/></svg>`;
+
+function mapsIconLink(url) {
+  if (!url) return '';
+  return `<a class="maps-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener" aria-label="Open in Google Maps" title="Open in Google Maps">${MAP_PIN_SVG}</a>`;
+}
+
 function configGate(res) {
   if (configIncomplete) {
     res
@@ -92,11 +100,7 @@ function renderListPage({ saves, ownerName, connectUrl }) {
             ${s.price_level ? `<span class="chip">${'₹'.repeat(s.price_level)}</span>` : ''}
           </div>
         </div>
-        ${
-          s.google_maps_url
-            ? `<a class="maps-btn" href="${escapeHtml(s.google_maps_url)}" target="_blank" rel="noopener">Maps</a>`
-            : ''
-        }
+        ${mapsIconLink(s.google_maps_url)}
       </div>
       ${
         s.cuisine_tags?.length
@@ -137,7 +141,9 @@ function renderListPage({ saves, ownerName, connectUrl }) {
     .card-top h3 { font-size: 16px; font-weight: 600; line-height: 1.3; }
     .meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; }
     .chip { background: #f0f0f0; padding: 2px 8px; border-radius: 20px; font-size: 12px; color: #555; }
-    .maps-btn { flex-shrink: 0; background: #f0f0f0; color: #333; text-decoration: none; padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 500; }
+    .maps-btn { flex-shrink: 0; background: #fff; color: #333; text-decoration: none; padding: 6px; border-radius: 999px; font-size: 13px; font-weight: 500; line-height: 0; border: 1px solid #eee; }
+    .maps-btn:hover { background: #f7f7f7; }
+    .maps-btn svg { display: block; }
     .tags { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px; }
     .tag { background: #e8f4e8; color: #2d6a2d; padding: 2px 8px; border-radius: 20px; font-size: 11px; }
     .note { margin-top: 8px; font-size: 13px; color: #555; background: #fffbe6; padding: 6px 10px; border-radius: 6px; line-height: 1.4; }
@@ -174,11 +180,7 @@ function renderComparePage({ userA, userB, mutual, aOnly, bOnly }) {
             ${s.price_level ? `<span class="chip">${'₹'.repeat(s.price_level)}</span>` : ''}
           </div>
         </div>
-        ${
-          s.google_maps_url
-            ? `<a class="maps-btn" href="${escapeHtml(s.google_maps_url)}" target="_blank" rel="noopener">Maps</a>`
-            : ''
-        }
+        ${mapsIconLink(s.google_maps_url)}
       </div>
     </div>`;
 
@@ -216,7 +218,9 @@ function renderComparePage({ userA, userB, mutual, aOnly, bOnly }) {
     .name { font-size: 15px; font-weight: 600; }
     .meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
     .chip { background: #f0f0f0; padding: 2px 8px; border-radius: 20px; font-size: 12px; color: #555; }
-    .maps-btn { flex-shrink: 0; background: #f0f0f0; color: #333; text-decoration: none; padding: 5px 10px; border-radius: 8px; font-size: 13px; }
+    .maps-btn { flex-shrink: 0; background: #fff; color: #333; text-decoration: none; padding: 6px; border-radius: 999px; font-size: 13px; line-height: 0; border: 1px solid #eee; }
+    .maps-btn:hover { background: #f7f7f7; }
+    .maps-btn svg { display: block; }
     .empty-section { padding: 8px 16px 12px; color: #999; font-size: 14px; }
     .footer { text-align: center; padding: 24px 16px; color: #bbb; font-size: 12px; }
   </style>

@@ -43,7 +43,7 @@ export function formatSaveConfirmation(save) {
     rating && meta ? `${rating} · ${meta}` : rating || meta,
     save.google_maps_url ? `📍 ${save.google_maps_url}` : '',
     '',
-    `Reply with any notes if you want to add them, or just keep forwarding reels.`
+    `Add a note: *note your text here* (attached to your latest save). Or keep forwarding reels.`
   ]
     .filter(Boolean)
     .join('\n');

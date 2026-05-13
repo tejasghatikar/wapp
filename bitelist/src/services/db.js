@@ -96,6 +96,11 @@ export async function createSave(userId, save) {
   return data;
 }
 
+export async function updateSaveNotes(saveId, notes) {
+  const { error } = await getSupabase().from(T.saves).update({ notes }).eq('id', saveId);
+  if (error) throw error;
+}
+
 export async function getRecentSaves(userId, limit = 200) {
   const { data, error } = await getSupabase()
     .from(T.saves)

@@ -4,7 +4,8 @@ import {
   softDeleteSave,
   findSaveByName,
   countSaves,
-  logEvent
+  logEvent,
+  updateSaveNotes
 } from '../services/db.js';
 import { sendMessage } from '../twilio/client.js';
 import { formatSaveList } from '../utils/format.js';
@@ -20,6 +21,7 @@ const HELP = `*BiteList* commands:
 • *undo* → remove last save
 • *delete <name>* → remove a specific save
 • *share* → public link of your list
+• *note your text* → add a note to your latest save
 
 Your phone number is your account. No app needed.`;
 
@@ -68,6 +70,27 @@ export async function handleDelete(user, text) {
   await softDeleteSave(save.id);
   await logEvent(user.id, 'command', { name: 'delete', save_id: save.id });
   await sendMessage(user.whatsapp_number, `Removed: *${save.restaurant_name}*.`);
+}
+
+export async function handleAddNote(user, text) {
+  await logEvent(user.id, 'command', { name: 'note' });
+  const note = text.replace(/^(note|notes)\s+/i, '').trim();
+  if (!note) {
+    await sendMessage(user.whatsapp_number, 'What should I save? Try: *note great for birthdays*');
+    return;
+  }
+  const latest = await getMostRecentSave(user.id);
+  if (!latest) {
+    await sendMessage(user.whatsapp_number, 'Save a place first, then send *note your text here*.');
+    return;
+  }
+  const merged = [latest.notes, note].filter(Boolean).join(' — ');
+  await updateSaveNotes(latest.id, merged);
+  await logEvent(user.id, 'command', { name: 'note_saved', save_id: latest.id });
+  await sendMessage(
+    user.whatsapp_number,
+    `📝 Noted for *${latest.restaurant_name}*: ${note}`
+  );
 }
 
 export async function handleShare(user) {

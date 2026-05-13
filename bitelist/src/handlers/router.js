@@ -13,7 +13,8 @@ import {
   handleCount,
   handleUndo,
   handleDelete,
-  handleShare
+  handleShare,
+  handleAddNote
 } from './commands.js';
 import { extractInstagramUrl, extractGoogleMapsUrl } from '../services/instagram.js';
 import { logger } from '../utils/logger.js';
@@ -57,6 +58,7 @@ export async function routeMessage(incoming) {
   if (/^undo$/i.test(lower)) return handleUndo(user);
   if (/^(delete|remove)\s+/i.test(lower)) return handleDelete(user, body);
   if (/^share$/i.test(lower)) return handleShare(user);
+  if (/^(note|notes)\s+/i.test(body)) return handleAddNote(user, body);
   if (/^(save|add)\s+/i.test(lower)) return handleManualSave(user, body);
 
   await handleQuery(user, body);

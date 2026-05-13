@@ -87,7 +87,7 @@ export const config = {
   },
   anthropic: {
     apiKey: process.env.ANTHROPIC_API_KEY || '',
-    model: process.env.CLAUDE_MODEL || 'claude-3-5-sonnet-20241022'
+    model: process.env.CLAUDE_MODEL || 'claude-haiku-4-5'
   },
   google: {
     placesApiKey: placesKey || ''

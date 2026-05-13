@@ -1,9 +1,10 @@
 import { extractionPrompt } from '../prompts/extract.js';
-import { callClaudeJson } from '../services/claude.js';
+import { callClaudeJson, ClaudeUnavailableError } from '../services/claude.js';
 import {
   fetchReelMetadata,
   extractInstagramUrl,
-  extractGoogleMapsUrl
+  extractGoogleMapsUrl,
+  resolveGoogleMapsPlaceName
 } from '../services/instagram.js';
 import { searchPlaces, extractAreaFromAddress } from '../services/places.js';
 import {
@@ -33,7 +34,24 @@ export async function handleReelSave(user, text) {
     return;
   }
 
-  const extracted = await callClaudeJson(extractionPrompt(meta.rawText));
+  let extracted;
+  try {
+    extracted = await callClaudeJson(extractionPrompt(meta.rawText));
+  } catch (err) {
+    if (err instanceof ClaudeUnavailableError) {
+      logger.warn(
+        { userId: user.id, status: err.status, model: err.model, url },
+        'Claude unavailable during reel extraction — replying with friendly fallback'
+      );
+      await sendMessage(
+        user.whatsapp_number,
+        "I read that reel but couldn't pull out the restaurant name (the assistant service didn't respond). What's the name and area? Reply like: *Toit Indiranagar*"
+      );
+      await createPending(user.id, [], url, 'instagram_reel');
+      return;
+    }
+    throw err;
+  }
 
   if (extracted.confidence < 0.6 || !extracted.restaurant_name) {
     await sendMessage(
@@ -82,20 +100,25 @@ export async function handleManualSave(user, text) {
 
 export async function handleGoogleMapsSave(user, text) {
   const url = extractGoogleMapsUrl(text);
-  if (!url) return;
+  if (!url) {
+    logger.warn({ text }, 'No Google Maps URL detected in message');
+    await sendMessage(
+      user.whatsapp_number,
+      "I didn't spot a Google Maps link. Paste one starting with https://maps.app.goo.gl/ or https://goo.gl/maps"
+    );
+    return;
+  }
 
   await logEvent(user.id, 'save_attempt', { source: 'google_maps', url });
 
   try {
-    const response = await fetch(url, { redirect: 'follow' });
-    const resolvedUrl = response.url;
-    const match = resolvedUrl.match(/\/place\/([^/]+)/);
-    const placeName = match ? decodeURIComponent(match[1].replace(/\+/g, ' ')) : null;
+    const { placeName, resolvedUrl } = await resolveGoogleMapsPlaceName(url);
+    logger.info({ shortUrl: url, resolvedUrl, placeName }, 'Resolved Google Maps link');
 
     if (!placeName) {
       await sendMessage(
         user.whatsapp_number,
-        "Couldn't read that Google Maps link. Just type the name like *Save Toit Indiranagar*"
+        "Couldn't read that Maps link after opening it. Try *Save <name> <area>* or a different Maps share link."
       );
       return;
     }
@@ -105,7 +128,7 @@ export async function handleGoogleMapsSave(user, text) {
     logger.error({ err }, 'Failed to resolve Google Maps link');
     await sendMessage(
       user.whatsapp_number,
-      "That link didn't open. Try typing the name: *Save Toit Indiranagar*"
+      "That link didn't open from the server. Try typing the name: *Save Toit Indiranagar*"
     );
   }
 }
@@ -128,7 +151,7 @@ async function runPlaceLookup(user, name, area, { sourceType, sourceUrl = null }
   if (candidates.length === 0) {
     await sendMessage(
       user.whatsapp_number,
-      `Couldn't find "${name}" on Maps. Want to save it anyway? Reply *yes* or fix the name.`
+      `I couldn't find "${name}" on Google Maps${area ? ` near ${area}` : ''}. Try the full name with the area (e.g. *Save ${name} Indiranagar*) or share the Google Maps link directly.`
     );
     return;
   }

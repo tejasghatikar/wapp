@@ -13,18 +13,41 @@ function getAnthropic() {
   return client;
 }
 
+export class ClaudeUnavailableError extends Error {
+  constructor(message, { cause, status, model } = {}) {
+    super(message);
+    this.name = 'ClaudeUnavailableError';
+    this.status = status;
+    this.model = model;
+    if (cause) this.cause = cause;
+  }
+}
+
 export async function callClaudeJson(prompt, options = {}) {
   const {
     maxTokens = 1024,
     systemPrompt = 'You return only valid JSON. No preamble, no markdown.'
   } = options;
 
-  const response = await getAnthropic().messages.create({
-    model: config.anthropic.model,
-    max_tokens: maxTokens,
-    system: systemPrompt,
-    messages: [{ role: 'user', content: prompt }]
-  });
+  let response;
+  try {
+    response = await getAnthropic().messages.create({
+      model: config.anthropic.model,
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: prompt }]
+    });
+  } catch (err) {
+    const status = err?.status || err?.response?.status;
+    logger.error(
+      { err, status, model: config.anthropic.model },
+      'Claude API call failed'
+    );
+    throw new ClaudeUnavailableError(
+      `Claude API call failed (status ${status ?? 'unknown'})`,
+      { cause: err, status, model: config.anthropic.model }
+    );
+  }
 
   const text = response.content
     .filter((b) => b.type === 'text')
@@ -38,6 +61,9 @@ export async function callClaudeJson(prompt, options = {}) {
     return JSON.parse(cleaned);
   } catch (err) {
     logger.error({ raw: text, cleaned }, 'Claude returned invalid JSON');
-    throw new Error('Invalid JSON from Claude');
+    throw new ClaudeUnavailableError('Claude returned invalid JSON', {
+      cause: err,
+      model: config.anthropic.model
+    });
   }
 }

@@ -24,6 +24,20 @@ const T = {
   events: 'bitelist_events'
 };
 
+export async function checkDatabaseHealth() {
+  const results = {};
+  for (const [label, table] of Object.entries(T)) {
+    const { error } = await getSupabase()
+      .from(table)
+      .select('id', { count: 'exact', head: true })
+      .limit(1);
+    results[label] = error
+      ? { ok: false, code: error.code, message: error.message }
+      : { ok: true };
+  }
+  return results;
+}
+
 export async function getUserByPhone(whatsappNumber) {
   const { data, error } = await getSupabase()
     .from(T.users)

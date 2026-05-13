@@ -4,6 +4,8 @@ import { logger } from './utils/logger.js';
 import { parseIncoming } from './twilio/parser.js';
 import { routeMessage } from './handlers/router.js';
 import { shareRouter } from './routes/share.js';
+import { checkDatabaseHealth } from './services/db.js';
+import { checkPlacesHealth } from './services/places.js';
 
 const app = express();
 
@@ -43,6 +45,24 @@ app.get('/health/env-status', (_req, res) => {
     missingEnvKeys,
     presence
   });
+});
+
+app.get('/health/deps', async (_req, res) => {
+  if (configIncomplete) {
+    return res.status(503).json({ ok: false, missingEnvKeys });
+  }
+
+  const [database, places] = await Promise.all([
+    checkDatabaseHealth(),
+    checkPlacesHealth()
+  ]);
+
+  const ok =
+    Object.values(database).every((result) => result.ok) &&
+    places.ok &&
+    places.placeCount > 0;
+
+  res.status(ok ? 200 : 503).json({ ok, database, places });
 });
 
 app.use('/', shareRouter);

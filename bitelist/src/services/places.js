@@ -4,6 +4,43 @@ import { logger } from '../utils/logger.js';
 const BANGALORE_CENTER = { latitude: 12.9716, longitude: 77.5946 };
 const SEARCH_RADIUS_M = 30000;
 
+export async function checkPlacesHealth() {
+  try {
+    const response = await fetch('https://places.googleapis.com/v1/places:searchText', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': config.google.placesApiKey,
+        'X-Goog-FieldMask': 'places.id,places.displayName'
+      },
+      body: JSON.stringify({
+        textQuery: 'Toit Indiranagar Bangalore',
+        regionCode: 'IN',
+        locationBias: {
+          circle: {
+            center: BANGALORE_CENTER,
+            radius: SEARCH_RADIUS_M
+          }
+        }
+      })
+    });
+
+    const body = await response.text();
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        message: body.slice(0, 500)
+      };
+    }
+
+    const data = JSON.parse(body);
+    return { ok: true, status: response.status, placeCount: data.places?.length || 0 };
+  } catch (err) {
+    return { ok: false, message: err.message };
+  }
+}
+
 export async function searchPlaces(query, area = null) {
   const textQuery = area ? `${query} ${area} Bangalore` : `${query} Bangalore`;
 

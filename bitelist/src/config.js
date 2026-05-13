@@ -37,33 +37,47 @@ const required = [
   ['SUPABASE_SERVICE_ROLE_KEY', process.env.SUPABASE_SERVICE_ROLE_KEY]
 ];
 
+const missingKeys = [];
 for (const [key, val] of required) {
-  if (!val) {
-    throw new Error(
-      `Missing required env var: ${key}. Add it to bitelist/.env or wapp/.env.local (see bitelist/.env.example).`
-    );
-  }
+  if (!val) missingKeys.push(key);
 }
+
+const runningOnRender = process.env.RENDER === 'true';
+
+if (missingKeys.length && !runningOnRender) {
+  throw new Error(
+    `Missing required env var: ${missingKeys[0]}. Add it to bitelist/.env or wapp/.env.local (see bitelist/.env.example). On Render, set these in the service Environment tab.`
+  );
+}
+
+if (missingKeys.length && runningOnRender) {
+  console.warn(
+    `[bitelist] Incomplete env on Render — add in Dashboard → Environment, then redeploy. Missing: ${missingKeys.join(', ')}`
+  );
+}
+
+export const configIncomplete = missingKeys.length > 0;
+export const missingEnvKeys = [...missingKeys];
 
 export const config = {
   port: parseInt(process.env.PORT || '3000', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
   publicUrl: process.env.PUBLIC_URL,
   twilio: {
-    accountSid: process.env.TWILIO_ACCOUNT_SID,
-    authToken: process.env.TWILIO_AUTH_TOKEN,
+    accountSid: process.env.TWILIO_ACCOUNT_SID || '',
+    authToken: process.env.TWILIO_AUTH_TOKEN || '',
     from: twilioFrom
   },
   anthropic: {
-    apiKey: process.env.ANTHROPIC_API_KEY,
+    apiKey: process.env.ANTHROPIC_API_KEY || '',
     model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-20250514'
   },
   google: {
-    placesApiKey: placesKey
+    placesApiKey: placesKey || ''
   },
   supabase: {
-    url: supabaseUrl,
-    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY
+    url: supabaseUrl || '',
+    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || ''
   },
   allowNewUsers: process.env.ALLOW_NEW_USERS !== 'false',
   logLevel: process.env.LOG_LEVEL || 'info'

@@ -1,9 +1,18 @@
 import express from 'express';
+import { configIncomplete, missingEnvKeys } from '../config.js';
 import { getUserBySlug, getRecentSaves } from '../services/db.js';
 
 export const shareRouter = express.Router();
 
 shareRouter.get('/list/:slug', async (req, res) => {
+  if (configIncomplete) {
+    res
+      .status(503)
+      .type('text')
+      .send(`BiteList is not fully configured yet.\n\nMissing: ${missingEnvKeys.join(', ')}\n`);
+    return;
+  }
+
   const user = await getUserBySlug(req.params.slug);
   if (!user) {
     res.status(404).send('List not found');

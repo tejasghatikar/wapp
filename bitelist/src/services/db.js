@@ -3,7 +3,19 @@ import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { randomBytes } from 'crypto';
 
-const supabase = createClient(config.supabase.url, config.supabase.serviceRoleKey);
+let cachedSupabase;
+function getSupabase() {
+  if (!cachedSupabase) {
+    const { url, serviceRoleKey } = config.supabase;
+    if (!url || !serviceRoleKey) {
+      throw new Error(
+        'Supabase is not configured. Set SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) and SUPABASE_SERVICE_ROLE_KEY in Render → Environment.'
+      );
+    }
+    cachedSupabase = createClient(url, serviceRoleKey);
+  }
+  return cachedSupabase;
+}
 
 const T = {
   users: 'bitelist_users',
@@ -13,7 +25,7 @@ const T = {
 };
 
 export async function getUserByPhone(whatsappNumber) {
-  const { data, error } = await supabase
+  const { data, error } = await getSupabase()
     .from(T.users)
     .select('*')
     .eq('whatsapp_number', whatsappNumber)
@@ -24,7 +36,7 @@ export async function getUserByPhone(whatsappNumber) {
 
 export async function createUser(whatsappNumber) {
   const shareSlug = randomBytes(5).toString('hex');
-  const { data, error } = await supabase
+  const { data, error } = await getSupabase()
     .from(T.users)
     .insert({
       whatsapp_number: whatsappNumber,
@@ -38,7 +50,7 @@ export async function createUser(whatsappNumber) {
 }
 
 export async function getUserBySlug(slug) {
-  const { data } = await supabase
+  const { data } = await getSupabase()
     .from(T.users)
     .select('*')
     .eq('share_slug', slug)
@@ -47,7 +59,7 @@ export async function getUserBySlug(slug) {
 }
 
 export async function createSave(userId, save) {
-  const { data, error } = await supabase
+  const { data, error } = await getSupabase()
     .from(T.saves)
     .insert({ user_id: userId, ...save })
     .select()
@@ -60,7 +72,7 @@ export async function createSave(userId, save) {
 }
 
 export async function getRecentSaves(userId, limit = 200) {
-  const { data, error } = await supabase
+  const { data, error } = await getSupabase()
     .from(T.saves)
     .select('*')
     .eq('user_id', userId)
@@ -72,7 +84,7 @@ export async function getRecentSaves(userId, limit = 200) {
 }
 
 export async function getSavesByArea(userId, area) {
-  const { data, error } = await supabase
+  const { data, error } = await getSupabase()
     .from(T.saves)
     .select('*')
     .eq('user_id', userId)
@@ -84,7 +96,7 @@ export async function getSavesByArea(userId, area) {
 }
 
 export async function softDeleteSave(saveId) {
-  const { error } = await supabase
+  const { error } = await getSupabase()
     .from(T.saves)
     .update({ deleted_at: new Date().toISOString() })
     .eq('id', saveId);
@@ -92,7 +104,7 @@ export async function softDeleteSave(saveId) {
 }
 
 export async function getMostRecentSave(userId) {
-  const { data } = await supabase
+  const { data } = await getSupabase()
     .from(T.saves)
     .select('*')
     .eq('user_id', userId)
@@ -104,7 +116,7 @@ export async function getMostRecentSave(userId) {
 }
 
 export async function findSaveByName(userId, name) {
-  const { data } = await supabase
+  const { data } = await getSupabase()
     .from(T.saves)
     .select('*')
     .eq('user_id', userId)
@@ -117,7 +129,7 @@ export async function findSaveByName(userId, name) {
 }
 
 export async function countSaves(userId) {
-  const { count } = await supabase
+  const { count } = await getSupabase()
     .from(T.saves)
     .select('id', { count: 'exact', head: true })
     .eq('user_id', userId)
@@ -126,7 +138,7 @@ export async function countSaves(userId) {
 }
 
 export async function createPending(userId, candidates, sourceUrl, sourceType) {
-  const { data, error } = await supabase
+  const { data, error } = await getSupabase()
     .from(T.pending)
     .insert({
       user_id: userId,
@@ -141,7 +153,7 @@ export async function createPending(userId, candidates, sourceUrl, sourceType) {
 }
 
 export async function getLatestPending(userId) {
-  const { data } = await supabase
+  const { data } = await getSupabase()
     .from(T.pending)
     .select('*')
     .eq('user_id', userId)
@@ -153,12 +165,12 @@ export async function getLatestPending(userId) {
 }
 
 export async function deletePending(pendingId) {
-  await supabase.from(T.pending).delete().eq('id', pendingId);
+  await getSupabase().from(T.pending).delete().eq('id', pendingId);
 }
 
 export async function logEvent(userId, eventType, payload = {}) {
   try {
-    await supabase.from(T.events).insert({
+    await getSupabase().from(T.events).insert({
       user_id: userId,
       event_type: eventType,
       payload

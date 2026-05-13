@@ -94,5 +94,105 @@ create table if not exists bitelist_events (
 create index if not exists idx_bitelist_events_user_type_created
   on bitelist_events(user_id, event_type, created_at desc);
 
+-- ── Phase 2: Friends graph + compare sessions ─────────────────────────────
+
+create table if not exists bitelist_friend_requests (
+  id uuid primary key default uuid_generate_v4(),
+  requester_id uuid references bitelist_users(id) on delete cascade,
+  recipient_id uuid references bitelist_users(id) on delete cascade,
+  status text default 'pending',
+  created_at timestamptz default now(),
+  unique(requester_id, recipient_id)
+);
+
+do $$ begin
+  if not exists (
+    select 1 from information_schema.constraint_column_usage
+    where table_name = 'bitelist_friend_requests'
+      and constraint_name = 'bitelist_friend_requests_status_check'
+  ) then
+    alter table bitelist_friend_requests
+      add constraint bitelist_friend_requests_status_check
+      check (status in ('pending', 'accepted', 'declined'));
+  end if;
+end $$;
+
+create table if not exists bitelist_friendships (
+  id uuid primary key default uuid_generate_v4(),
+  user_a_id uuid references bitelist_users(id) on delete cascade,
+  user_b_id uuid references bitelist_users(id) on delete cascade,
+  created_at timestamptz default now(),
+  unique(user_a_id, user_b_id)
+);
+
+create index if not exists idx_bitelist_friendships_a
+  on bitelist_friendships(user_a_id);
+
+create index if not exists idx_bitelist_friendships_b
+  on bitelist_friendships(user_b_id);
+
+create table if not exists bitelist_compare_sessions (
+  id uuid primary key default uuid_generate_v4(),
+  slug_a text not null references bitelist_users(share_slug),
+  slug_b text not null references bitelist_users(share_slug),
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_bitelist_compare_sessions_created
+  on bitelist_compare_sessions(created_at desc);
+
+-- Places both users saved (ordered by user A's rating).
+create or replace function bitelist_mutual_saves(user_a uuid, user_b uuid)
+returns table (
+  id uuid,
+  restaurant_name text,
+  area text,
+  google_rating numeric,
+  price_level int,
+  cuisine_tags text[],
+  google_maps_url text
+)
+language sql stable as $$
+  select s1.id, s1.restaurant_name, s1.area, s1.google_rating,
+         s1.price_level, s1.cuisine_tags, s1.google_maps_url
+  from bitelist_saves s1
+  join bitelist_saves s2 on s2.google_place_id = s1.google_place_id
+  where s1.user_id = user_a
+    and s2.user_id = user_b
+    and s1.deleted_at is null
+    and s2.deleted_at is null
+    and s1.google_place_id is not null
+  order by coalesce(s1.google_rating, 0) desc
+  limit 10;
+$$;
+
+-- Places friend has saved that `me` hasn't (by google_place_id).
+create or replace function bitelist_new_for_user(me uuid, friend uuid)
+returns table (
+  id uuid,
+  restaurant_name text,
+  area text,
+  google_rating numeric,
+  price_level int,
+  cuisine_tags text[],
+  google_maps_url text
+)
+language sql stable as $$
+  select s.id, s.restaurant_name, s.area, s.google_rating,
+         s.price_level, s.cuisine_tags, s.google_maps_url
+  from bitelist_saves s
+  where s.user_id = friend
+    and s.deleted_at is null
+    and s.google_place_id is not null
+    and not exists (
+      select 1 from bitelist_saves s2
+      where s2.user_id = me
+        and s2.google_place_id = s.google_place_id
+        and s2.deleted_at is null
+    )
+  order by coalesce(s.google_rating, 0) desc
+  limit 10;
+$$;
+
 -- Force Supabase/PostgREST to refresh its schema cache after creating tables.
 notify pgrst, 'reload schema';

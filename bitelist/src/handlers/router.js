@@ -22,7 +22,13 @@ import {
   handleUndo,
   handleDelete,
   handleShare,
-  handleAddNote
+  handleAddNote,
+  handleSetName,
+  handleConnectRequest,
+  handleFriendResponse,
+  handleFriendsList,
+  handleSuggest,
+  handleDiscover
 } from './commands.js';
 import { extractInstagramUrl, extractGoogleMapsUrl } from '../services/instagram.js';
 import { logger } from '../utils/logger.js';
@@ -83,6 +89,15 @@ export async function routeMessage(incoming) {
   if (/^(delete|remove)\s+/i.test(lower)) return handleDelete(user, body);
   if (/^share$/i.test(lower)) return handleShare(user);
   if (/^(note|notes)\s+/i.test(body)) return handleAddNote(user, body);
+  if (/^name\s+/i.test(lower)) return handleSetName(user, body);
+
+  if (/^connect with /i.test(body)) return handleConnectRequest(user, body);
+  if (/^accept\s+/i.test(lower)) return handleFriendResponse(user, body);
+  if (/^decline\s+/i.test(lower)) return handleFriendResponse(user, body);
+  if (/^friends$/i.test(lower)) return handleFriendsList(user);
+  if (/^suggest with\s+/i.test(lower)) return handleSuggest(user, body);
+  if (/^discover with\s+/i.test(lower)) return handleDiscover(user, body);
+
   if (/^(save|add)\s+/i.test(lower)) return handleManualSave(user, body);
 
   await handleQuery(user, body);

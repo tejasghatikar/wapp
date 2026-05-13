@@ -5,14 +5,35 @@ import {
   findSaveByName,
   countSaves,
   logEvent,
-  updateSaveNotes
+  updateSaveNotes,
+  updateUserDisplayName,
+  getUserBySlug,
+  createFriendRequest,
+  getPendingRequestByName,
+  acceptFriendRequest,
+  declineFriendRequest,
+  getFriends,
+  areFriends,
+  getMutualSaves,
+  getNewForUser,
+  createCompareSession
 } from '../services/db.js';
 import { sendMessage } from '../twilio/client.js';
 import { formatSaveList } from '../utils/format.js';
 import { config } from '../config.js';
+import { logger } from '../utils/logger.js';
+
+function publicBase() {
+  return (config.publicUrl || '').replace(/\/$/, '');
+}
+
+function firstNameToken(name) {
+  return (name || '').trim().split(/\s+/)[0]?.toLowerCase() || '';
+}
 
 const HELP = `*BiteList* commands:
 
+*Save*
 • Forward any *Instagram reel* → saves the restaurant
 • Send a *Google Maps link* → saves that place
 • *Save Toit Indiranagar* → manual save
@@ -22,13 +43,24 @@ const HELP = `*BiteList* commands:
    _Maize & Malt MG Road_
    _https://maps.app.goo.gl/..._
 • After every save I'll ask: *1* want to go · *2* been there
-• Ask *where should I go in JP Nagar* → query your list
+• *note your text* → add a note to your latest save
+
+*Find*
+• Ask anything: *where should I go in JP Nagar*
 • *list* → your last 10 saves
-• *count* → how many you've saved
+• *count* → total saves
+
+*Friends*
+• *name <your name>* → set how friends see you
+• *friends* → see your connections
+• *suggest with Rahul* → places you both saved
+• *discover with Rahul* → places Rahul saved that you haven't
+
+*Other*
 • *undo* → remove last save
 • *delete <name>* → remove a specific save
 • *share* → public link of your list
-• *note your text* → add a note to your latest save
+• *help* → this message
 
 Your phone number is your account. No app needed.`;
 
@@ -109,10 +141,250 @@ export async function handleShare(user) {
     );
     return;
   }
-  const base = config.publicUrl.replace(/\/$/, '');
+  const base = publicBase();
   const url = `${base}/list/${user.share_slug}`;
   await sendMessage(
     user.whatsapp_number,
     `Here's your shareable list:\n\n${url}\n\nAnyone with this link can see your saved places. They can't edit or message you through it.`
   );
+}
+
+// ── Friend / display-name commands ───────────────────────────────────────
+
+export async function handleSetName(user, text) {
+  const name = text.replace(/^name\s+/i, '').trim();
+  if (!name) {
+    await sendMessage(
+      user.whatsapp_number,
+      'Tell me what to call you. Try: *name Tejas*'
+    );
+    return;
+  }
+  if (name.length > 60) {
+    await sendMessage(user.whatsapp_number, 'That name is a bit long — keep it under 60 characters.');
+    return;
+  }
+  await updateUserDisplayName(user.id, name);
+  await logEvent(user.id, 'command', { name: 'set_name', value: name });
+  await sendMessage(
+    user.whatsapp_number,
+    `Got it — friends will see you as *${name}*. Share your list with *share* so they can connect.`
+  );
+}
+
+// Triggered by: "connect with <display_name> <share_slug>"
+export async function handleConnectRequest(requester, text) {
+  const match = text.match(/^connect with (.+?)\s+([a-f0-9]{10,})$/i);
+  if (!match) {
+    await sendMessage(
+      requester.whatsapp_number,
+      "Connection format not recognised. Use the Connect button on someone's BiteList page."
+    );
+    return;
+  }
+
+  const [, ownerName, slug] = match;
+  const owner = await getUserBySlug(slug);
+
+  if (!owner) {
+    await sendMessage(requester.whatsapp_number, "Couldn't find that BiteList. The link may have expired.");
+    return;
+  }
+
+  if (owner.id === requester.id) {
+    await sendMessage(requester.whatsapp_number, "That's your own list. 😄");
+    return;
+  }
+
+  const already = await areFriends(requester.id, owner.id);
+  if (already) {
+    await sendMessage(
+      requester.whatsapp_number,
+      `You and ${owner.display_name || 'that person'} are already connected.`
+    );
+    return;
+  }
+
+  const req = await createFriendRequest(requester.id, owner.id);
+  if (req && req.duplicate) {
+    await sendMessage(
+      requester.whatsapp_number,
+      "You've already sent a request. Waiting for them to accept."
+    );
+    return;
+  }
+
+  const requesterLabel = requester.display_name || requester.whatsapp_number;
+  const firstName = firstNameToken(requesterLabel);
+  await sendMessage(
+    owner.whatsapp_number,
+    `👋 *${requesterLabel}* wants to connect on BiteList so they can see your saved places and find overlap with theirs.\n\nReply *accept ${firstName}* or *decline ${firstName}*.`
+  );
+
+  await sendMessage(
+    requester.whatsapp_number,
+    `Request sent to ${owner.display_name || ownerName}. I'll let you know when they accept.`
+  );
+
+  await logEvent(requester.id, 'connect_request_sent', { to: owner.id });
+}
+
+// Triggered by: "accept priya" or "decline priya"
+export async function handleFriendResponse(user, text) {
+  const isAccept = /^accept\s+/i.test(text);
+  const name = text.replace(/^(accept|decline)\s+/i, '').trim();
+  if (!name) {
+    await sendMessage(
+      user.whatsapp_number,
+      'Reply with the friend\'s name, e.g. *accept priya* or *decline priya*.'
+    );
+    return;
+  }
+
+  const pending = await getPendingRequestByName(user.id, name);
+  if (!pending || !pending.requester) {
+    await sendMessage(
+      user.whatsapp_number,
+      `No pending request from "${name}". Check the name and try again.`
+    );
+    return;
+  }
+
+  const requester = pending.requester;
+
+  if (isAccept) {
+    await acceptFriendRequest(pending.id, requester.id, user.id);
+    const friendFirstName = firstNameToken(requester.display_name || name);
+    await sendMessage(
+      user.whatsapp_number,
+      `✅ Connected with *${requester.display_name || name}*!\n\nNow try: *suggest with ${friendFirstName}* to find places you both saved.`
+    );
+    const youFirstName = firstNameToken(user.display_name || 'them');
+    await sendMessage(
+      requester.whatsapp_number,
+      `✅ *${user.display_name || 'They'}* accepted your BiteList connection!\n\nTry: *suggest with ${youFirstName}*`
+    );
+    await logEvent(user.id, 'friend_accepted', { friend_id: requester.id });
+  } else {
+    await declineFriendRequest(pending.id);
+    await sendMessage(user.whatsapp_number, `Declined. They won't be notified.`);
+    await logEvent(user.id, 'friend_declined', { friend_id: requester.id });
+  }
+}
+
+export async function handleFriendsList(user) {
+  await logEvent(user.id, 'command', { name: 'friends' });
+  const friends = await getFriends(user.id);
+  const base = publicBase();
+  if (!friends.length) {
+    const hint = base
+      ? `\n\n${base}/list/${user.share_slug}`
+      : '';
+    await sendMessage(
+      user.whatsapp_number,
+      `No connections yet. Share your list and ask friends to tap Connect:${hint}`
+    );
+    return;
+  }
+  const lines = friends.map((f, i) => {
+    const label = f.display_name || f.whatsapp_number;
+    const url = base ? ` → ${base}/list/${f.share_slug}` : '';
+    return `${i + 1}. ${label}${url}`;
+  });
+  await sendMessage(user.whatsapp_number, `Your connections:\n\n${lines.join('\n')}`);
+}
+
+function findFriendByName(friends, name) {
+  const lower = (name || '').toLowerCase();
+  return friends.find((f) => (f.display_name || '').toLowerCase().includes(lower));
+}
+
+export async function handleSuggest(user, text) {
+  const name = text.replace(/^suggest with\s+/i, '').trim();
+  if (!name) {
+    await sendMessage(user.whatsapp_number, 'Tell me who. Try: *suggest with Priya*.');
+    return;
+  }
+  const friends = await getFriends(user.id);
+  const friend = findFriendByName(friends, name);
+
+  if (!friend) {
+    await sendMessage(
+      user.whatsapp_number,
+      `No connection named "${name}". Try *friends* to see your list.`
+    );
+    return;
+  }
+
+  const mutual = await getMutualSaves(user.id, friend.id);
+
+  if (!mutual.length) {
+    await sendMessage(
+      user.whatsapp_number,
+      `You and ${friend.display_name || name} haven't saved any of the same places yet.\n\nTry *discover with ${name}* to see what they've saved that you haven't.`
+    );
+    return;
+  }
+
+  try {
+    await createCompareSession(user.share_slug, friend.share_slug);
+  } catch (err) {
+    logger.warn({ err, userId: user.id, friendId: friend.id }, 'createCompareSession failed (non-fatal)');
+  }
+
+  const base = publicBase();
+  const url = base
+    ? `${base}/compare/${user.share_slug}/${friend.share_slug}`
+    : null;
+
+  const preview = mutual
+    .slice(0, 3)
+    .map((s, i) =>
+      `${i + 1}. *${s.restaurant_name}*${s.area ? `, ${s.area}` : ''}${s.google_rating ? ` ⭐${s.google_rating}` : ''}`
+    )
+    .join('\n');
+
+  const more = mutual.length > 3 ? `\n...and ${mutual.length - 3} more` : '';
+  const linkBlock = url ? `\n\n📋 Full list (shareable):\n${url}` : '';
+  const friendLabel = friend.display_name || name;
+
+  await sendMessage(
+    user.whatsapp_number,
+    `You and ${friendLabel} both saved *${mutual.length} place${mutual.length > 1 ? 's' : ''}*:\n\n${preview}${more}${linkBlock}`
+  );
+
+  await logEvent(user.id, 'suggest', { friend_id: friend.id, mutual_count: mutual.length });
+}
+
+export async function handleDiscover(user, text) {
+  const name = text.replace(/^discover with\s+/i, '').trim();
+  if (!name) {
+    await sendMessage(user.whatsapp_number, 'Tell me who. Try: *discover with Priya*.');
+    return;
+  }
+  const friends = await getFriends(user.id);
+  const friend = findFriendByName(friends, name);
+
+  if (!friend) {
+    await sendMessage(
+      user.whatsapp_number,
+      `No connection named "${name}". Try *friends* to see your list.`
+    );
+    return;
+  }
+
+  const newPlaces = await getNewForUser(user.id, friend.id);
+
+  if (!newPlaces.length) {
+    await sendMessage(
+      user.whatsapp_number,
+      `You've already saved everything ${friend.display_name || name} has. They need to save more places!`
+    );
+    return;
+  }
+
+  const header = `${friend.display_name || name} saved these — you haven't been yet:`;
+  await sendMessage(user.whatsapp_number, formatSaveList(newPlaces, header));
+
+  await logEvent(user.id, 'discover', { friend_id: friend.id, new_count: newPlaces.length });
 }

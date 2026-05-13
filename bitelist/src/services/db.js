@@ -22,7 +22,10 @@ const T = {
   saves: 'bitelist_saves',
   pending: 'bitelist_pending_saves',
   pendingStatus: 'bitelist_pending_status',
-  events: 'bitelist_events'
+  events: 'bitelist_events',
+  friendRequests: 'bitelist_friend_requests',
+  friendships: 'bitelist_friendships',
+  compareSessions: 'bitelist_compare_sessions'
 };
 
 export async function checkDatabaseHealth() {
@@ -239,6 +242,170 @@ export async function getLatestPendingStatus(userId) {
 
 export async function deletePendingStatus(pendingStatusId) {
   await getSupabase().from(T.pendingStatus).delete().eq('id', pendingStatusId);
+}
+
+export async function updateUserDisplayName(userId, displayName) {
+  const { error } = await getSupabase()
+    .from(T.users)
+    .update({ display_name: displayName })
+    .eq('id', userId);
+  if (error) throw error;
+}
+
+// ── Friends ──────────────────────────────────────────────────────────────
+
+export async function createFriendRequest(requesterId, recipientId) {
+  const { data, error } = await getSupabase()
+    .from(T.friendRequests)
+    .insert({ requester_id: requesterId, recipient_id: recipientId, status: 'pending' })
+    .select()
+    .single();
+  if (error) {
+    if (error.code === '23505') return { duplicate: true };
+    logger.error(
+      { code: error.code, message: error.message, requesterId, recipientId },
+      'Failed to create friend request'
+    );
+    throw error;
+  }
+  return data;
+}
+
+export async function getPendingRequest(requesterId, recipientId) {
+  const { data, error } = await getSupabase()
+    .from(T.friendRequests)
+    .select('*')
+    .eq('requester_id', requesterId)
+    .eq('recipient_id', recipientId)
+    .eq('status', 'pending')
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+// Find a pending request from someone whose display_name matches `requesterName`.
+// Uses a two-step lookup because PostgREST filters on joined columns are unreliable.
+export async function getPendingRequestByName(recipientId, requesterName) {
+  const supabase = getSupabase();
+  const trimmed = (requesterName || '').trim();
+  if (!trimmed) return null;
+
+  const { data: candidateUsers, error: userErr } = await supabase
+    .from(T.users)
+    .select('id, whatsapp_number, display_name, share_slug')
+    .ilike('display_name', `%${trimmed}%`);
+  if (userErr) throw userErr;
+  if (!candidateUsers || candidateUsers.length === 0) return null;
+
+  const ids = candidateUsers.map((u) => u.id);
+  const { data: requests, error: reqErr } = await supabase
+    .from(T.friendRequests)
+    .select('*')
+    .eq('recipient_id', recipientId)
+    .eq('status', 'pending')
+    .in('requester_id', ids)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (reqErr) throw reqErr;
+  if (!requests || requests.length === 0) return null;
+
+  const request = requests[0];
+  const requester = candidateUsers.find((u) => u.id === request.requester_id) || null;
+  return { ...request, requester };
+}
+
+export async function acceptFriendRequest(requestId, requesterId, recipientId) {
+  const supabase = getSupabase();
+  const { error: updErr } = await supabase
+    .from(T.friendRequests)
+    .update({ status: 'accepted' })
+    .eq('id', requestId);
+  if (updErr) throw updErr;
+
+  const { error: insErr } = await supabase
+    .from(T.friendships)
+    .upsert(
+      [
+        { user_a_id: requesterId, user_b_id: recipientId },
+        { user_a_id: recipientId, user_b_id: requesterId }
+      ],
+      { onConflict: 'user_a_id,user_b_id', ignoreDuplicates: true }
+    );
+  if (insErr) throw insErr;
+}
+
+export async function declineFriendRequest(requestId) {
+  const { error } = await getSupabase()
+    .from(T.friendRequests)
+    .update({ status: 'declined' })
+    .eq('id', requestId);
+  if (error) throw error;
+}
+
+export async function getFriends(userId) {
+  const { data, error } = await getSupabase()
+    .from(T.friendships)
+    .select('friend:user_b_id(id, display_name, share_slug, whatsapp_number)')
+    .eq('user_a_id', userId);
+  if (error) throw error;
+  return (data || []).map((row) => row.friend).filter(Boolean);
+}
+
+export async function areFriends(userAId, userBId) {
+  const { data, error } = await getSupabase()
+    .from(T.friendships)
+    .select('id')
+    .eq('user_a_id', userAId)
+    .eq('user_b_id', userBId)
+    .maybeSingle();
+  if (error) throw error;
+  return !!data;
+}
+
+// ── Mutual saves (RPC) ───────────────────────────────────────────────────
+
+export async function getMutualSaves(userAId, userBId) {
+  const { data, error } = await getSupabase().rpc('bitelist_mutual_saves', {
+    user_a: userAId,
+    user_b: userBId
+  });
+  if (error) throw error;
+  return data || [];
+}
+
+export async function getNewForUser(userId, friendId) {
+  const { data, error } = await getSupabase().rpc('bitelist_new_for_user', {
+    me: userId,
+    friend: friendId
+  });
+  if (error) throw error;
+  return data || [];
+}
+
+// ── Compare sessions ─────────────────────────────────────────────────────
+
+export async function createCompareSession(slugA, slugB) {
+  const { data, error } = await getSupabase()
+    .from(T.compareSessions)
+    .insert({ slug_a: slugA, slug_b: slugB })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+// ── Friend augmentation helper ───────────────────────────────────────────
+
+export async function getFriendSavesForPlaces(friendIds, placeIds) {
+  if (!friendIds?.length || !placeIds?.length) return [];
+  const { data, error } = await getSupabase()
+    .from(T.saves)
+    .select('user_id, google_place_id')
+    .in('user_id', friendIds)
+    .in('google_place_id', placeIds)
+    .is('deleted_at', null);
+  if (error) throw error;
+  return data || [];
 }
 
 export async function logEvent(userId, eventType, payload = {}) {

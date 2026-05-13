@@ -12,6 +12,8 @@ Here's what I do:
 
 No app. No login. Your number is your account.
 
+Tell me what to call you with *name <your name>* so friends can recognise you.
+
 Try forwarding a reel right now, or type *help* anytime.`;
 
 export async function handleOnboarding(from) {

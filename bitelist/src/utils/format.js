@@ -14,6 +14,9 @@ export function formatSaveList(saves, header = null) {
 
     lines.push(`${i + 1}. *${s.restaurant_name}*${s.area ? `, ${s.area}` : ''} ${rating}`);
     if (meta) lines.push(`   ${meta}`);
+    if (s._friends_who_saved?.length) {
+      lines.push(`   👥 Also saved by ${s._friends_who_saved.join(', ')}`);
+    }
     if (s.google_maps_url) lines.push(`   📍 ${s.google_maps_url}`);
     lines.push('');
   });

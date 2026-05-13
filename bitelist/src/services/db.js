@@ -202,6 +202,15 @@ export async function deletePending(pendingId) {
   await getSupabase().from(T.pending).delete().eq('id', pendingId);
 }
 
+/** Clears onboarding name-capture pending rows so a structured command (e.g. connect) can proceed. */
+export async function deleteOnboardingNamePendingForUser(userId) {
+  await getSupabase()
+    .from(T.pending)
+    .delete()
+    .eq('user_id', userId)
+    .eq('source_type', 'onboarding');
+}
+
 export async function updateSaveStatus(saveId, status, visitedNotes = null) {
   const patch = { status };
   if (visitedNotes !== null) patch.visited_notes = visitedNotes;

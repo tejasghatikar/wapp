@@ -3,6 +3,7 @@ import {
   getLatestPending,
   getLatestPendingStatus,
   deletePending,
+  deleteOnboardingNamePendingForUser,
   updateUserDisplayName,
   logEvent
 } from '../services/db.js';
@@ -46,15 +47,54 @@ export async function routeMessage(incoming) {
       logger.warn({ from }, 'Blocked new user (ALLOW_NEW_USERS=false)');
       return;
     }
-    await handleOnboarding(from);
+    const newUser = await handleOnboarding(from);
+    const trimmedFirst = body.trim();
+    if (/^connect with /i.test(trimmedFirst)) {
+      try {
+        await handleConnectRequest(newUser, trimmedFirst);
+      } catch (err) {
+        logger.error({ err, from }, 'Connect request failed right after onboarding');
+      }
+      try {
+        await deleteOnboardingNamePendingForUser(newUser.id);
+      } catch (err) {
+        logger.warn({ err, userId: newUser.id }, 'Failed to clear onboarding pending after connect');
+      }
+    }
     return;
   }
 
   await logEvent(user.id, 'message_in', { body });
 
   const lower = body.toLowerCase().trim();
+  const trimmedBody = body.trim();
+
+  // Friend intents must win over onboarding name capture — otherwise "connect with…"
+  // is swallowed by onboarding (new user) or mistaken for a name (awaiting_name pending).
+  if (/^connect with /i.test(trimmedBody)) {
+    await handleConnectRequest(user, trimmedBody);
+    return;
+  }
+  if (/^accept\s+/i.test(lower)) {
+    await handleFriendResponse(user, body);
+    return;
+  }
+  if (/^decline\s+/i.test(lower)) {
+    await handleFriendResponse(user, body);
+    return;
+  }
 
   const pending = await getLatestPending(user.id);
+
+  if (
+    pending?.source_type === 'onboarding' &&
+    pending.candidates?.[0]?.type === 'awaiting_name' &&
+    /^(name|setname|my name is)\s+/i.test(lower)
+  ) {
+    const ok = await handleSetName(user, body);
+    if (ok) await deletePending(pending.id);
+    return;
+  }
 
   if (pending?.source_type === 'onboarding' && pending.candidates?.[0]?.type === 'awaiting_name') {
     if (await handleAwaitingName(user, body, pending)) return;
@@ -99,9 +139,6 @@ export async function routeMessage(incoming) {
   if (/^(note|notes)\s+/i.test(body)) return handleAddNote(user, body);
   if (/^(name|setname|my name is)\s+/i.test(lower)) return handleSetName(user, body);
 
-  if (/^connect with /i.test(body)) return handleConnectRequest(user, body);
-  if (/^accept\s+/i.test(lower)) return handleFriendResponse(user, body);
-  if (/^decline\s+/i.test(lower)) return handleFriendResponse(user, body);
   if (/^friends$/i.test(lower)) return handleFriendsList(user);
   if (/^suggest with\s+/i.test(lower)) return handleSuggest(user, body);
   if (/^discover with\s+/i.test(lower)) return handleDiscover(user, body);
@@ -129,7 +166,35 @@ async function handleAwaitingName(user, body, pending) {
     return true;
   }
 
-  const firstWord = trimmed.split(/\s+/)[0] || '';
+  const myNameMatch = trimmed.match(/^my name is\s+(.+)$/i);
+  const namePart = (myNameMatch ? myNameMatch[1] : trimmed).trim();
+  const firstWord = namePart.split(/\s+/)[0] || '';
+
+  const GENERIC_DENY = new Set([
+    'hi',
+    'hey',
+    'hello',
+    'yo',
+    'sup',
+    'ok',
+    'okay',
+    'yes',
+    'no',
+    'help',
+    'start',
+    'my',
+    'the',
+    'a',
+    'an'
+  ]);
+  if (GENERIC_DENY.has(firstWord.toLowerCase())) {
+    await sendMessage(
+      user.whatsapp_number,
+      "That doesn't look like a name. Send your first name, or *my name is Tejas*, or *skip*."
+    );
+    return true;
+  }
+
   const looksLikeName =
     firstWord.length >= 2 &&
     firstWord.length <= 30 &&
@@ -139,7 +204,7 @@ async function handleAwaitingName(user, body, pending) {
   if (!looksLikeName) {
     await sendMessage(
       user.whatsapp_number,
-      "That doesn't look like a name. Send just your first name, or reply *skip*."
+      "That doesn't look like a name. Send just your first name, or *my name is Tejas*, or reply *skip*."
     );
     return true;
   }

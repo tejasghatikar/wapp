@@ -158,11 +158,11 @@ export async function handleSetName(user, text) {
       user.whatsapp_number,
       'Tell me what to call you. Try: *name Tejas*'
     );
-    return;
+    return false;
   }
   if (name.length > 60) {
     await sendMessage(user.whatsapp_number, 'That name is a bit long — keep it under 60 characters.');
-    return;
+    return false;
   }
   await updateUserDisplayName(user.id, name);
   await logEvent(user.id, 'command', { name: 'set_name', value: name });
@@ -170,6 +170,7 @@ export async function handleSetName(user, text) {
     user.whatsapp_number,
     `Got it — friends will see you as *${name}*. Share your list with *share* so they can connect.`
   );
+  return true;
 }
 
 // Triggered by: "connect with <display_name> <share_slug>"
@@ -213,6 +214,11 @@ export async function handleConnectRequest(requester, text) {
     );
     return;
   }
+
+  logger.info(
+    { requesterId: requester.id, ownerId: owner.id, slug, ownerPhone: owner.whatsapp_number },
+    'Friend request created; notifying list owner'
+  );
 
   const requesterLabel = requester.display_name || requester.whatsapp_number;
   const firstName = firstNameToken(requesterLabel);

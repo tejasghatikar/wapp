@@ -2,8 +2,11 @@ import {
   getUserByPhone,
   getLatestPending,
   getLatestPendingStatus,
+  deletePending,
+  updateUserDisplayName,
   logEvent
 } from '../services/db.js';
+import { sendMessage } from '../twilio/client.js';
 import { handleOnboarding } from './onboarding.js';
 import {
   handleReelSave,
@@ -51,14 +54,19 @@ export async function routeMessage(incoming) {
 
   const lower = body.toLowerCase().trim();
 
+  const pending = await getLatestPending(user.id);
+
+  if (pending?.source_type === 'onboarding' && pending.candidates?.[0]?.type === 'awaiting_name') {
+    if (await handleAwaitingName(user, body, pending)) return;
+  }
+
   const pendingStatus = await getLatestPendingStatus(user.id);
   if (pendingStatus && isStatusReply(body)) {
     await handleStatusReply(user, body, pendingStatus);
     return;
   }
 
-  const pending = await getLatestPending(user.id);
-  if (pending && pending.candidates?.length > 0 && /^[1-9]$|^option\s+[1-9]/i.test(body)) {
+  if (pending && pending.candidates?.length > 0 && pending.source_type !== 'onboarding' && /^[1-9]$|^option\s+[1-9]/i.test(body)) {
     await handleDisambiguation(user, body, pending);
     return;
   }
@@ -101,4 +109,61 @@ export async function routeMessage(incoming) {
   if (/^(save|add)\s+/i.test(lower)) return handleManualSave(user, body);
 
   await handleQuery(user, body);
+}
+
+/**
+ * Returns true if the message was consumed by the onboarding name flow.
+ * Returns false if the input doesn't look like a name and the message should
+ * be re-prompted (we keep the pending alive in that case).
+ */
+async function handleAwaitingName(user, body, pending) {
+  const trimmed = body.trim();
+
+  if (/^skip$/i.test(trimmed)) {
+    await deletePending(pending.id);
+    await logEvent(user.id, 'name_skipped');
+    await sendMessage(
+      user.whatsapp_number,
+      "No problem — you can set it any time with *name <your name>*. Send a Maps link or *Save <place>* to start your list."
+    );
+    return true;
+  }
+
+  const firstWord = trimmed.split(/\s+/)[0] || '';
+  const looksLikeName =
+    firstWord.length >= 2 &&
+    firstWord.length <= 30 &&
+    !/^\d+$/.test(firstWord) &&
+    !/[^\p{L}\p{M}'.\-]/u.test(firstWord);
+
+  if (!looksLikeName) {
+    await sendMessage(
+      user.whatsapp_number,
+      "That doesn't look like a name. Send just your first name, or reply *skip*."
+    );
+    return true;
+  }
+
+  const name = firstWord.replace(/['.\-]+$/, '');
+
+  try {
+    await updateUserDisplayName(user.id, name);
+  } catch (err) {
+    logger.error({ err, userId: user.id }, 'Failed to save onboarding display name');
+    await sendMessage(
+      user.whatsapp_number,
+      "Couldn't save that name just now. Try again in a moment, or send *skip*."
+    );
+    return true;
+  }
+
+  await deletePending(pending.id);
+  user.display_name = name;
+  await logEvent(user.id, 'name_set', { name, via: 'onboarding' });
+
+  await sendMessage(
+    user.whatsapp_number,
+    `Perfect! Your list is now *${name}'s picks*.\n\nStart saving — forward an Instagram reel, paste a Google Maps link, or type *Save Toit Indiranagar*. Type *help* anytime.`
+  );
+  return true;
 }

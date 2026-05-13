@@ -13,10 +13,36 @@ app.use(express.json());
 app.get('/', (_req, res) => {
   if (configIncomplete) {
     return res.type('text').send(
-      `BiteList is running but required environment variables are missing.\n\nMissing: ${missingEnvKeys.join(', ')}\n\nRender → your service → Environment → add each (same as local .env.local), Save, then redeploy. See bitelist/.env.example.\n`
+      `BiteList is running but required environment variables are missing.\n\nMissing: ${missingEnvKeys.join(', ')}\n\nRender → your service → Environment → add each (same as local .env.local), Save, then redeploy. See bitelist/.env.example.\n\nDebug (no secrets): open /health/env-status in this browser while config is incomplete.\n`
     );
   }
   res.send('BiteList is alive');
+});
+
+/** Only on Render while env incomplete: shows which keys exist (booleans), not values. */
+app.get('/health/env-status', (_req, res) => {
+  if (process.env.RENDER !== 'true' || !configIncomplete) {
+    return res.status(404).end();
+  }
+  const keys = [
+    'TWILIO_ACCOUNT_SID',
+    'TWILIO_AUTH_TOKEN',
+    'TWILIO_WHATSAPP_FROM',
+    'ANTHROPIC_API_KEY',
+    'GOOGLE_MAPS_API_KEY',
+    'GOOGLE_PLACES_API_KEY',
+    'SUPABASE_URL',
+    'NEXT_PUBLIC_SUPABASE_URL',
+    'SUPABASE_SERVICE_ROLE_KEY'
+  ];
+  const presence = Object.fromEntries(
+    keys.map((k) => [k, Boolean(String(process.env[k] ?? '').trim())])
+  );
+  res.json({
+    hint: 'true = non-empty for this Node process (values never shown). If all false, variables are not on this Web Service in Render or were not saved.',
+    missingEnvKeys,
+    presence
+  });
 });
 
 app.use('/', shareRouter);

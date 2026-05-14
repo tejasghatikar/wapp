@@ -96,6 +96,12 @@ create index if not exists idx_bitelist_events_user_type_created
   on bitelist_events(user_id, event_type, created_at desc);
 
 -- ── Phase 2: Friends graph + compare sessions ─────────────────────────────
+--
+-- bitelist_friend_requests: legacy table. The app does not read or write it
+-- after the instant "friend <share_slug>" linking flow (see bitelist-phase2-
+-- friends-webapp.md). Existing databases may still have this table; new rows
+-- are never inserted by current code. Optional removal:
+--   bitelist/sql/optional-drop-friend-requests.sql
 
 create table if not exists bitelist_friend_requests (
   id uuid primary key default uuid_generate_v4(),

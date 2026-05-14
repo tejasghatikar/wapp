@@ -33,6 +33,8 @@ create table if not exists bitelist_saves (
 );
 
 -- Idempotently add the new columns to existing deployments.
+alter table bitelist_users add column if not exists pending_friend_link_notify_owner_ids uuid[] not null default '{}';
+
 alter table bitelist_saves add column if not exists status text default 'want_to_go';
 alter table bitelist_saves add column if not exists visited_notes text;
 alter table bitelist_saves add column if not exists google_photo_url text;

@@ -31,7 +31,8 @@ import {
   handleFriendLink,
   handleFriendsList,
   handleSuggest,
-  handleDiscover
+  handleDiscover,
+  flushPendingFriendLinkOwnerNotifications
 } from './commands.js';
 import { extractInstagramUrl, extractGoogleMapsUrl } from '../services/instagram.js';
 import { logger } from '../utils/logger.js';
@@ -219,6 +220,12 @@ async function handleAwaitingName(user, body, pending) {
   await deletePending(pending.id);
   user.display_name = name;
   await logEvent(user.id, 'name_set', { name, via: 'onboarding' });
+
+  try {
+    await flushPendingFriendLinkOwnerNotifications(user);
+  } catch (err) {
+    logger.warn({ err, userId: user.id }, 'flushPendingFriendLinkOwnerNotifications after onboarding name failed');
+  }
 
   await sendMessage(
     user.whatsapp_number,

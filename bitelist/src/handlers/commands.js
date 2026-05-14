@@ -8,6 +8,9 @@ import {
   updateSaveNotes,
   updateUserDisplayName,
   getUserBySlug,
+  getUserById,
+  appendPendingFriendLinkNotifyOwner,
+  takeAndClearPendingFriendLinkNotifyOwnerIds,
   ensureFriendship,
   getFriends,
   areFriends,
@@ -149,6 +152,45 @@ export async function handleShare(user) {
 
 // ── Friend / display-name commands ───────────────────────────────────────
 
+/** After display_name is set: notify list owners who were linked before we had a name. */
+export async function flushPendingFriendLinkOwnerNotifications(user) {
+  const label = (user.display_name || '').trim();
+  if (!label) return;
+
+  let ownerIds;
+  try {
+    ownerIds = await takeAndClearPendingFriendLinkNotifyOwnerIds(user.id);
+  } catch (err) {
+    logger.error({ err, userId: user.id }, 'takeAndClearPendingFriendLinkNotifyOwnerIds failed');
+    return;
+  }
+
+  const seen = new Set();
+  for (const ownerId of ownerIds) {
+    const oid = String(ownerId);
+    if (seen.has(oid)) continue;
+    seen.add(oid);
+
+    let owner;
+    try {
+      owner = await getUserById(ownerId);
+    } catch (err) {
+      logger.warn({ err, ownerId }, 'getUserById failed for friend-link owner notify');
+      continue;
+    }
+    if (!owner?.whatsapp_number) continue;
+
+    try {
+      await sendMessage(
+        owner.whatsapp_number,
+        `*${label}* linked with you on BiteList (they opened your list).`
+      );
+    } catch (err) {
+      logger.warn({ err, ownerId: owner.id }, 'Failed to send deferred friend-link notification to list owner');
+    }
+  }
+}
+
 export async function handleSetName(user, text) {
   const name = text.replace(/^(my name is|setname|name)\s+/i, '').trim();
   if (!name) {
@@ -168,6 +210,7 @@ export async function handleSetName(user, text) {
     user.whatsapp_number,
     `Got it — friends will see you as *${name}*. Share your list with *share*; when they open the link they can tap *Link on BiteList* to connect.`
   );
+  await flushPendingFriendLinkOwnerNotifications({ ...user, display_name: name });
   return true;
 }
 
@@ -207,18 +250,23 @@ export async function handleFriendLink(requester, text) {
   await ensureFriendship(owner.id, requester.id);
   await logEvent(requester.id, 'friend_linked', { owner_id: owner.id });
 
-  const requesterLabel = requester.display_name || requester.whatsapp_number;
   const ownerLabel = owner.display_name || 'this list';
+  const requesterHasName = !!(requester.display_name && requester.display_name.trim());
 
   await sendMessage(
     requester.whatsapp_number,
     `You're now connected with *${ownerLabel}* on BiteList.\n\nTry *suggest with ${firstNameToken(owner.display_name || ownerLabel)}* for overlap, or *discover with ${firstNameToken(owner.display_name || ownerLabel)}* for their picks you haven't saved.`
   );
 
-  await sendMessage(
-    owner.whatsapp_number,
-    `👋 *${requesterLabel}* linked with you on BiteList (they opened your list).`
-  );
+  if (requesterHasName) {
+    const who = requester.display_name.trim();
+    await sendMessage(
+      owner.whatsapp_number,
+      `*${who}* linked with you on BiteList (they opened your list).`
+    );
+  } else {
+    await appendPendingFriendLinkNotifyOwner(requester.id, owner.id);
+  }
 }
 
 export async function handleFriendsList(user) {

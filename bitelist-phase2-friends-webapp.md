@@ -27,7 +27,7 @@ Phase 2 (done): Share list → Link on BiteList (WhatsApp) → Friends → Sugge
 
 1. **Identity:** The browser page does not know the visitor’s WhatsApp id. The **WhatsApp message** to the bot does.
 2. Visitor taps **Link on BiteList** → `https://wa.me/<digits>?text=friend%20<share_slug>`.
-3. Bot handles `handleFriendLink` in `commands.js`: resolves owner by `getUserBySlug(slug)`, validates, then **`ensureFriendship(ownerId, requesterId)`** (bidirectional upsert into `bitelist_friendships`).
+3. Bot handles `handleFriendLink` in `commands.js`: resolves owner by `getUserBySlug(slug)`, validates, then **`ensureFriendship(ownerId, requesterId)`** (bidirectional upsert into `bitelist_friendships`). The list owner gets a WhatsApp ping **only once the linker has a non-empty `display_name`** (immediate if they already set a name; otherwise deferred until onboarding / `name` sets it — see `pending_friend_link_notify_owner_ids` on `bitelist_users`).
 4. Router runs **`^friend\s`** **before** onboarding name capture so new users can send the pre-filled message right after joining.
 
 There are **no** `accept` / `decline` commands and **no** application reads/writes to `bitelist_friend_requests`.
@@ -40,7 +40,7 @@ Canonical definitions: **`bitelist/sql/schema.sql`** (prefixed tables `bitelist_
 
 | Table | Role |
 |--------|------|
-| `bitelist_users` | `share_slug` (public list id), `display_name`, `whatsapp_number`, … |
+| `bitelist_users` | `share_slug` (public list id), `display_name`, `whatsapp_number`, `pending_friend_link_notify_owner_ids` (uuid[] queue for deferred “X linked with you” DMs to list owners), … |
 | `bitelist_saves` | Saves per user (`user_id` → `on delete cascade`). |
 | `bitelist_friendships` | Undirected edges stored as two rows `(A,B)` and `(B,A)` with `unique(user_a_id, user_b_id)`. |
 | `bitelist_compare_sessions` | Optional analytics rows; **FK** `slug_a`, `slug_b` → `bitelist_users(share_slug)`. **Important for user delete** — see `bitelist/sql/admin-remove-user.sql`. |

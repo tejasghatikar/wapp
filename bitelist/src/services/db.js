@@ -76,6 +76,57 @@ export async function getUserBySlug(slug) {
   return data;
 }
 
+export async function getUserById(userId) {
+  const { data, error } = await getSupabase()
+    .from(T.users)
+    .select('*')
+    .eq('id', userId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+/** Queue list-owner user ids to notify once this user sets display_name (friend link before naming). */
+export async function appendPendingFriendLinkNotifyOwner(userId, ownerUserId) {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from(T.users)
+    .select('pending_friend_link_notify_owner_ids')
+    .eq('id', userId)
+    .maybeSingle();
+  if (error) throw error;
+  const raw = data?.pending_friend_link_notify_owner_ids;
+  const cur = Array.isArray(raw) ? raw : [];
+  const sid = String(ownerUserId);
+  if (cur.some((id) => String(id) === sid)) return;
+  const next = [...cur, ownerUserId];
+  const { error: uerr } = await supabase
+    .from(T.users)
+    .update({ pending_friend_link_notify_owner_ids: next })
+    .eq('id', userId);
+  if (uerr) throw uerr;
+}
+
+/** Returns queued owner user ids and clears the queue (single consumer). */
+export async function takeAndClearPendingFriendLinkNotifyOwnerIds(userId) {
+  const supabase = getSupabase();
+  const { data, error } = await supabase
+    .from(T.users)
+    .select('pending_friend_link_notify_owner_ids')
+    .eq('id', userId)
+    .maybeSingle();
+  if (error) throw error;
+  const raw = data?.pending_friend_link_notify_owner_ids;
+  const ids = Array.isArray(raw) ? raw : [];
+  if (ids.length === 0) return [];
+  const { error: uerr } = await supabase
+    .from(T.users)
+    .update({ pending_friend_link_notify_owner_ids: [] })
+    .eq('id', userId);
+  if (uerr) throw uerr;
+  return ids;
+}
+
 export async function createSave(userId, save) {
   const { data, error } = await getSupabase()
     .from(T.saves)

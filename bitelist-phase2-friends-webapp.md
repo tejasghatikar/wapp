@@ -1,7 +1,7 @@
 # BiteList — Phase 2: Friends + Webapp (current spec)
 
 > **Supersedes** the earlier draft that used `connect with` / `accept` / `decline`. The live product uses an **instant link**: list page → WhatsApp → `friend <share_slug>` → `bitelist_friendships` upsert.  
-> **Source of truth:** `bitelist/sql/schema.sql`, `bitelist/src/services/db.js`, `bitelist/src/handlers/commands.js`, `bitelist/src/handlers/router.js`, `bitelist/src/routes/share.js`.
+> **Source of truth:** `bitelist/sql/schema.sql`, `bitelist/src/services/db.js`, `bitelist/src/services/friendActivity.js`, `bitelist/src/handlers/commands.js`, `bitelist/src/handlers/router.js`, `bitelist/src/routes/share.js`.
 
 ---
 
@@ -18,8 +18,16 @@ Phase 2 (done): Share list → Link on BiteList (WhatsApp) → Friends → Sugge
 |--------|--------|
 | `GET /list/:slug` | Public list for `share_slug`. **Link on BiteList** opens `wa.me` with pre-filled `friend <owner.share_slug>`. |
 | `GET /compare/:slugA/:slugB` | Mutual saves + asymmetric previews; WhatsApp share for shortlist. |
+| `GET /internal/cron/friend-activity-digest?secret=…&date=YYYY-MM-DD` | **Optional.** Sends batched “friends saved in areas you use” WhatsApp digests for a given `activity_date` (defaults to **yesterday** in `Asia/Kolkata`). Requires `CRON_SECRET` on the server. |
 
 **Bot remains** the only way to add/remove saves and manage the account.
+
+### Friend activity digests (WhatsApp)
+
+- When a friend **successfully saves** a place with a non-empty **`area`**, each connected friend may get **one queued line** for that Kolkata calendar day — **only if** that friend already has at least one save in the **same area** (case-insensitive match on trimmed `area` text).
+- **At most one digest row per (recipient, friend, day)**; multiple saves that day are merged into that row’s list.
+- **Quiet mode** (`quiet`, `quiet on`, `dnd`, `do not disturb`, …): recipient gets **no** digest sends; queued rows for a run are marked sent without messaging. `quiet off` / `loud` re-enables.
+- **Cron** should run **once per day** after the India calendar day you want to close out (e.g. process **yesterday** so the full day is captured). Schedule an HTTP GET with `?secret=$CRON_SECRET` (see `src/index.js`).
 
 ---
 
@@ -40,9 +48,10 @@ Canonical definitions: **`bitelist/sql/schema.sql`** (prefixed tables `bitelist_
 
 | Table | Role |
 |--------|------|
-| `bitelist_users` | `share_slug` (public list id), `display_name`, `whatsapp_number`, `pending_friend_link_notify_owner_ids` (uuid[] queue for deferred “X linked with you” DMs to list owners), … |
+| `bitelist_users` | `share_slug`, `display_name`, `whatsapp_number`, `quiet_mode`, `pending_friend_link_notify_owner_ids`, … |
 | `bitelist_saves` | Saves per user (`user_id` → `on delete cascade`). |
 | `bitelist_friendships` | Undirected edges stored as two rows `(A,B)` and `(B,A)` with `unique(user_a_id, user_b_id)`. |
+| `bitelist_friend_activity_digest` | Pending lines for daily batched friend-save WhatsApp digests (`digest_sent_at` when processed). |
 | `bitelist_compare_sessions` | Optional analytics rows; **FK** `slug_a`, `slug_b` → `bitelist_users(share_slug)`. **Important for user delete** — see `bitelist/sql/admin-remove-user.sql`. |
 | `bitelist_friend_requests` | **Legacy / unused by app.** See § “Friend requests table” below. |
 
@@ -62,6 +71,8 @@ Canonical definitions: **`bitelist/sql/schema.sql`** (prefixed tables `bitelist_
 | Message pattern | Handler / behavior |
 |------------------|-------------------|
 | `friend <hex_slug>` | `handleFriendLink` — instant connect (usually from list page). |
+| `quiet` / `quiet on` / `dnd` / `do not disturb` | Enable **quiet mode** (no friend-activity digests). |
+| `quiet off` / `loud` / `notifications on` | Disable quiet mode. |
 | `friends` | List connections + list URLs when `PUBLIC_URL` is set. |
 | `suggest with <name>` | Substring match on friend `display_name`; mutual saves + `/compare/...` link. |
 | `discover with <name>` | Friend’s saves you don’t have (by `google_place_id`). |
@@ -75,6 +86,7 @@ Canonical definitions: **`bitelist/sql/schema.sql`** (prefixed tables `bitelist_
 ## Router notes (`router.js`)
 
 - **`^friend\s`** is handled **early** (including the **first message** after `handleOnboarding` for brand-new users).
+- **`quiet` / `loud` / `notifications on|off`** are handled early (before onboarding name capture) so they are not mistaken for names.
 - Onboarding name capture denies generic tokens including `friend`, `accept`, `decline`, `connect` so they are not mistaken for names.
 
 ---

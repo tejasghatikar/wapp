@@ -34,6 +34,7 @@ create table if not exists bitelist_saves (
 
 -- Idempotently add the new columns to existing deployments.
 alter table bitelist_users add column if not exists pending_friend_link_notify_owner_ids uuid[] not null default '{}';
+alter table bitelist_users add column if not exists quiet_mode boolean not null default false;
 
 alter table bitelist_saves add column if not exists status text default 'want_to_go';
 alter table bitelist_saves add column if not exists visited_notes text;
@@ -139,6 +140,22 @@ create index if not exists idx_bitelist_friendships_a
 
 create index if not exists idx_bitelist_friendships_b
   on bitelist_friendships(user_b_id);
+
+-- Friend save activity: one row per (recipient, friend, Kolkata calendar day).
+-- Cron sends one WhatsApp digest per recipient per day, then sets digest_sent_at.
+create table if not exists bitelist_friend_activity_digest (
+  id uuid primary key default uuid_generate_v4(),
+  recipient_id uuid not null references bitelist_users(id) on delete cascade,
+  source_friend_id uuid not null references bitelist_users(id) on delete cascade,
+  activity_date date not null,
+  places jsonb not null default '[]',
+  digest_sent_at timestamptz,
+  created_at timestamptz default now(),
+  unique(recipient_id, source_friend_id, activity_date)
+);
+
+create index if not exists idx_friend_activity_digest_pending
+  on bitelist_friend_activity_digest(activity_date, digest_sent_at);
 
 create table if not exists bitelist_compare_sessions (
   id uuid primary key default uuid_generate_v4(),

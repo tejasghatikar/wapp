@@ -97,5 +97,7 @@ export const config = {
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || ''
   },
   allowNewUsers: process.env.ALLOW_NEW_USERS !== 'false',
-  logLevel: process.env.LOG_LEVEL || 'info'
+  logLevel: process.env.LOG_LEVEL || 'info',
+  /** Required for GET /internal/cron/friend-activity-digest ?secret= */
+  cronSecret: (process.env.CRON_SECRET || '').trim()
 };

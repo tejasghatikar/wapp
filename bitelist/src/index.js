@@ -6,6 +6,7 @@ import { routeMessage } from './handlers/router.js';
 import { shareRouter } from './routes/share.js';
 import { checkDatabaseHealth } from './services/db.js';
 import { checkPlacesHealth } from './services/places.js';
+import { runFriendActivityDigestForActivityDate, kolkataYesterdayYmd } from './services/friendActivity.js';
 
 const app = express();
 
@@ -63,6 +64,35 @@ app.get('/health/deps', async (_req, res) => {
     places.placeCount > 0;
 
   res.status(ok ? 200 : 503).json({ ok, database, places });
+});
+
+/**
+ * Daily job: send batched friend-activity digests for *yesterday* (Asia/Kolkata).
+ * Configure Render Cron (or similar) to GET this URL once per day with ?secret=CRON_SECRET
+ */
+app.get('/internal/cron/friend-activity-digest', async (req, res) => {
+  if (configIncomplete) {
+    return res.status(503).json({ ok: false, missingEnvKeys });
+  }
+  const secret = String(req.query.secret || '');
+  if (!config.cronSecret) {
+    return res.status(503).json({ ok: false, error: 'CRON_SECRET is not set on the server' });
+  }
+  if (secret !== config.cronSecret) {
+    return res.status(401).json({ ok: false, error: 'Unauthorized' });
+  }
+
+  const override = String(req.query.date || '').trim();
+  const activityDate = /^\d{4}-\d{2}-\d{2}$/.test(override) ? override : kolkataYesterdayYmd();
+
+  try {
+    const result = await runFriendActivityDigestForActivityDate(activityDate);
+    logger.info(result, 'Friend activity digest cron completed');
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    logger.error({ err, activityDate }, 'Friend activity digest cron failed');
+    res.status(500).json({ ok: false, error: String(err?.message || err) });
+  }
 });
 
 app.use('/', shareRouter);

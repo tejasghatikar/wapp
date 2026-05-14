@@ -25,6 +25,7 @@ const T = {
   events: 'bitelist_events',
   friendRequests: 'bitelist_friend_requests',
   friendships: 'bitelist_friendships',
+  friendActivityDigest: 'bitelist_friend_activity_digest',
   compareSessions: 'bitelist_compare_sessions'
 };
 
@@ -312,6 +313,102 @@ export async function updateUserDisplayName(userId, displayName) {
   if (error) throw error;
 }
 
+export async function updateUserQuietMode(userId, quiet) {
+  const { error } = await getSupabase()
+    .from(T.users)
+    .update({ quiet_mode: !!quiet })
+    .eq('id', userId);
+  if (error) throw error;
+}
+
+/** Lowercased trimmed areas the user has at least one non-deleted save in. */
+export async function getDistinctSaveAreaNormsForUser(userId) {
+  const { data, error } = await getSupabase()
+    .from(T.saves)
+    .select('area')
+    .eq('user_id', userId)
+    .is('deleted_at', null);
+  if (error) throw error;
+  const set = new Set();
+  for (const row of data || []) {
+    const a = (row.area || '').trim().toLowerCase();
+    if (a) set.add(a);
+  }
+  return set;
+}
+
+export async function mergeFriendActivityDigestPlace({
+  recipientId,
+  sourceFriendId,
+  activityDate,
+  restaurantName,
+  areaDisplay
+}) {
+  const supabase = getSupabase();
+  const key = (n, a) => `${String(n || '').toLowerCase()}|${String(a || '').trim().toLowerCase()}`;
+  const incomingKey = key(restaurantName, areaDisplay);
+
+  const mergeInto = async (row) => {
+    const prev = Array.isArray(row?.places) ? row.places : [];
+    if (prev.some((p) => key(p.restaurant_name, p.area) === incomingKey)) return;
+    const next = [...prev, { restaurant_name: restaurantName, area: areaDisplay }];
+    if (row?.id) {
+      const { error } = await supabase.from(T.friendActivityDigest).update({ places: next }).eq('id', row.id);
+      if (error) throw error;
+    } else {
+      const { error } = await supabase.from(T.friendActivityDigest).insert({
+        recipient_id: recipientId,
+        source_friend_id: sourceFriendId,
+        activity_date: activityDate,
+        places: next
+      });
+      if (error?.code === '23505') {
+        const { data: again } = await supabase
+          .from(T.friendActivityDigest)
+          .select('id, places')
+          .eq('recipient_id', recipientId)
+          .eq('source_friend_id', sourceFriendId)
+          .eq('activity_date', activityDate)
+          .maybeSingle();
+        if (!again?.id) throw error;
+        await mergeInto(again);
+        return;
+      }
+      if (error) throw error;
+    }
+  };
+
+  const { data: row, error } = await supabase
+    .from(T.friendActivityDigest)
+    .select('id, places')
+    .eq('recipient_id', recipientId)
+    .eq('source_friend_id', sourceFriendId)
+    .eq('activity_date', activityDate)
+    .maybeSingle();
+  if (error) throw error;
+  await mergeInto(row);
+}
+
+export async function listPendingFriendDigestRowsForDate(activityDate) {
+  const { data, error } = await getSupabase()
+    .from(T.friendActivityDigest)
+    .select('*')
+    .eq('activity_date', activityDate)
+    .is('digest_sent_at', null);
+  if (error) throw error;
+  return data || [];
+}
+
+export async function markFriendDigestSentForRecipientDate(recipientId, activityDate) {
+  const { error } = await getSupabase()
+    .from(T.friendActivityDigest)
+    .update({ digest_sent_at: new Date().toISOString() })
+    .eq('recipient_id', recipientId)
+    .eq('activity_date', activityDate)
+    .is('digest_sent_at', null);
+  if (error) throw error;
+}
+
 // ── Friends (instant link via list page → WhatsApp `friend <slug>`) ───────
 
 export async function ensureFriendship(userAId, userBId) {
@@ -330,7 +427,7 @@ export async function ensureFriendship(userAId, userBId) {
 export async function getFriends(userId) {
   const { data, error } = await getSupabase()
     .from(T.friendships)
-    .select('friend:user_b_id(id, display_name, share_slug, whatsapp_number)')
+    .select('friend:user_b_id(id, display_name, share_slug, whatsapp_number, quiet_mode)')
     .eq('user_a_id', userId);
   if (error) throw error;
   return (data || []).map((row) => row.friend).filter(Boolean);

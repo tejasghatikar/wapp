@@ -7,6 +7,7 @@ import {
   logEvent,
   updateSaveNotes,
   updateUserDisplayName,
+  updateUserQuietMode,
   getUserBySlug,
   getUserById,
   appendPendingFriendLinkNotifyOwner,
@@ -53,9 +54,12 @@ const HELP = `*BiteList* commands:
 *Friends*
 • *name <your name>* → set how friends see you
 • *friends* → see your connections
+• *quiet* / *quiet on* → stop daily friend-activity digests · *quiet off* or *loud* → turn them back on
 • Open a shared list link → tap *Link on BiteList* in WhatsApp (one message) to connect
 • *suggest with Rahul* → places you both saved
 • *discover with Rahul* → places Rahul saved that you haven't
+• *quiet* / *quiet on* → turn off daily friend-activity digests
+• *quiet off* or *loud* → turn digests back on
 
 *Other*
 • *undo* → remove last save
@@ -212,6 +216,40 @@ export async function handleSetName(user, text) {
   );
   await flushPendingFriendLinkOwnerNotifications({ ...user, display_name: name });
   return true;
+}
+
+export async function handleQuietCommand(user, text) {
+  const raw = text.trim().toLowerCase();
+  let quiet;
+  if (raw === 'loud' || raw === 'quiet off' || raw === 'notifications on') quiet = false;
+  else if (
+    raw === 'quiet' ||
+    raw === 'quiet on' ||
+    raw === 'notifications off' ||
+    raw === 'do not disturb' ||
+    raw === 'dnd'
+  ) {
+    quiet = true;
+  } else {
+    await sendMessage(
+      user.whatsapp_number,
+      'Try *quiet* (pause friend save digests), *quiet off*, or *loud*.'
+    );
+    return;
+  }
+  await updateUserQuietMode(user.id, quiet);
+  await logEvent(user.id, 'quiet_mode', { quiet });
+  if (quiet) {
+    await sendMessage(
+      user.whatsapp_number,
+      "You're in *quiet mode* — you won't get daily digests when friends save in areas you already use. Say *loud* or *quiet off* anytime."
+    );
+  } else {
+    await sendMessage(
+      user.whatsapp_number,
+      "Friend activity digests are *on* again. You'll get at most one batched message per day when friends save in areas you've saved in too."
+    );
+  }
 }
 
 // Triggered by list page WhatsApp button: "friend <share_slug>" (list owner's slug)

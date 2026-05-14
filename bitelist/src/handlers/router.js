@@ -32,7 +32,8 @@ import {
   handleFriendsList,
   handleSuggest,
   handleDiscover,
-  flushPendingFriendLinkOwnerNotifications
+  flushPendingFriendLinkOwnerNotifications,
+  handleQuietCommand
 } from './commands.js';
 import { extractInstagramUrl, extractGoogleMapsUrl } from '../services/instagram.js';
 import { logger } from '../utils/logger.js';
@@ -72,6 +73,18 @@ export async function routeMessage(incoming) {
   // Friend link must win over onboarding name capture (`friend <share_slug>` from list page).
   if (/^friend\s/i.test(trimmedBody)) {
     await handleFriendLink(user, trimmedBody);
+    return;
+  }
+  if (/^loud$/i.test(lower)) {
+    await handleQuietCommand(user, body);
+    return;
+  }
+  if (/^do not disturb$/i.test(lower)) {
+    await handleQuietCommand(user, body);
+    return;
+  }
+  if (/^quiet(\s+on|\s+off)?$/i.test(lower) || /^(notifications off|notifications on|dnd)$/i.test(lower)) {
+    await handleQuietCommand(user, body);
     return;
   }
 

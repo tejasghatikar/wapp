@@ -17,6 +17,7 @@ import {
   deletePendingStatus,
   updateSaveStatus
 } from '../services/db.js';
+import { enqueueFriendActivityAfterSave } from '../services/friendActivity.js';
 import { sendMessage } from '../twilio/client.js';
 import { formatSaveConfirmation, formatCandidates, formatStatusUpdated } from '../utils/format.js';
 import { logger } from '../utils/logger.js';
@@ -226,6 +227,7 @@ async function processBulkEntry(user, line) {
   }
 
   await logEvent(user.id, 'save_success', { place_id: place.place_id, source: 'bulk' });
+  await enqueueFriendActivityAfterSave(user, saved);
   return { line, status: 'saved', place };
 }
 
@@ -351,6 +353,7 @@ async function runPlaceLookup(user, name, area, { sourceType, sourceUrl = null }
     }
 
     await logEvent(user.id, 'save_success', { place_id: place.place_id, source: sourceType });
+    await enqueueFriendActivityAfterSave(user, saved);
     await promptStatusAfterSave(user, saved);
     return;
   }
@@ -411,6 +414,7 @@ export async function handleDisambiguation(user, text, pending) {
   }
 
   await logEvent(user.id, 'save_success', { place_id: place.place_id, source: pending.source_type });
+  await enqueueFriendActivityAfterSave(user, saved);
   await promptStatusAfterSave(user, saved);
 }
 
